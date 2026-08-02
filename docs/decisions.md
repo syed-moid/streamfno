@@ -94,3 +94,22 @@ backlog is not destroyed).
 freezes the nonlinear coupling, so every production configuration is checked
 by halving dt and doubling the grid together (`test_refinement_stability`
 plus per-experiment checks) rather than relying on stability alone.
+
+---
+
+## 2026-08-02 — analysis library (B3)
+
+**W1 from the lattice measure.** Wasserstein-1 uses scipy's CDF-based
+implementation on weighted point supports, comparing the exact lag-lattice
+empirical measure against PDE cell-center weights directly. Rejected:
+comparing re-binned fixed-grid histograms — re-binning atoms adds an
+O(1/n_bins) distance artifact of the same order as the convergence effects
+under study.
+
+**Spectral decay fit.** Cosine coefficients via DCT-II of cell-averaged
+density values (the cosine basis diagonalizes the Neumann Laplacian, matching
+reflecting walls); plain rFFT computed alongside to quantify the basis-choice
+effect. Tail exponent s fitted by Theil–Sen regression of log|c_k| on log k
+over a stated k-range, with its 95% CI. Rejected: ordinary least squares —
+densities with near-symmetries produce sporadic near-zero coefficients whose
+log values dominate an OLS fit; Theil–Sen is robust to them.
