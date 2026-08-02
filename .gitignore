@@ -1,0 +1,32 @@
+# local instruction/notes files (not part of the repository)
+streamfno-scaffold-instructions.md
+CLAUDE.md
+.claude/
+
+# author's working area
+manuscript/
+
+# documents
+*.docx
+*.pdf
+*.pptx
+
+# generated outputs (regenerate via make targets)
+figures/*
+!figures/.gitkeep
+data/*
+!data/.gitkeep
+
+# kafka runtime state
+kafka-lab/
+
+# python
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+
+# os
+.DS_Store
