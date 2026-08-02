@@ -63,3 +63,34 @@ counts on the lag lattice {0, 1/B, …, 1}. Reason: for B not a multiple of
 n_bins, re-binning lattice atoms onto the fixed grid adds an O(1/n_bins)
 Wasserstein artifact comparable to the effects e00 measures; distances are
 computed from the lattice measure, plots use the fixed grid.
+
+---
+
+## 2026-08-02 — Fokker–Planck solver (B2)
+
+**Scheme.** Conservative finite volume on a uniform grid with Chang–Cooper
+exponential weighting of the advective interface flux, implicit Euler in time
+(one tridiagonal solve per class per step), coefficients frozen at the step
+start (semi-implicit in the mean-field coupling). Chang–Cooper is
+positivity-preserving and exact on stationary exponential profiles — which is
+precisely the closed-form validation case. With a = 0 the weighting
+degenerates to first-order upwinding, so the same solver yields the transport
+reference for e00's fluid contrast. Rejected: central differencing (loses
+positivity at cell Péclet > 2, i.e. exactly in the near-wall boundary layer
+we care about) and explicit stepping (CFL dt ~ h²/a is wasteful at the grid
+resolutions e00 needs).
+
+**Regulated boundary at x = 1.** The wall is mass-conserving (zero numerical
+flux), matching the simulator, where saturated partitions remain in the
+system at X = 1; the advective flux the wall cancels, max(b(1,m),0)·ρ(1,t),
+is accumulated into K_B(t) as the PDE counterpart of the rejection counter.
+Rejected: an absorbing/outflow boundary that removes the excess mass from the
+domain — it drains total mass, which breaks the probability-density
+comparison with the (mass-conserving) empirical measure and does not match
+rejection semantics (a saturated partition stays saturated; its unserved
+backlog is not destroyed).
+
+**Convergence policy.** Implicit Euler is unconditionally stable but dt also
+freezes the nonlinear coupling, so every production configuration is checked
+by halving dt and doubling the grid together (`test_refinement_stability`
+plus per-experiment checks) rather than relying on stability alone.
