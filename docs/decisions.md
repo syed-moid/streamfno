@@ -113,3 +113,26 @@ effect. Tail exponent s fitted by Theil–Sen regression of log|c_k| on log k
 over a stated k-range, with its 95% CI. Rejected: ordinary least squares —
 densities with near-symmetries produce sporadic near-zero coefficients whose
 log values dominate an OLS fit; Theil–Sen is robust to them.
+
+---
+
+## 2026-08-02 — experiment e00 (B4)
+
+**Sim↔PDE correspondence.** `streamfno.matching` maps a SimConfig to its
+continuum problem: drift b(x,m) = E[λ] − μ0·g(m) with the same logistic
+degradation g as the simulator, diffusion = the config's netput variance rate
+a (diffusive mode) or 0 (fluid → transport), initial density = the truncated
+Gaussian the simulator samples from. For MMPP the stationary mean rate is
+used (exact only in the fast-switching limit) — e00/e01 use constant Poisson
+netput so this does not affect them.
+
+**Distances at single sample times, 5 seeds.** W1 is measured between the
+instantaneous lattice measure and the PDE density at t ∈ {2,5,10,20,40}
+(dt_sample = 1). Rejected: time-averaging the empirical measure before
+comparing — it lowers the sampling floor but convolves the distance with the
+temporal autocorrelation of the finite-N system, muddying the N-scaling that
+T1 is about.
+
+**Sweep engine.** tau-leap everywhere in the sweep (Gillespie at N=1000,
+B=200 would be ~4·10^7 events × O(N) Python work per event); the engines are
+cross-validated distributionally in tests/test_sim.py on a small config.
