@@ -18,11 +18,14 @@ telemetry predictor can do better in expectation; the telemetry channel
 can only add to this floor.  Monte-Carlo standard errors are reported;
 comparisons use CIs.
 
-Decision states are taken at the particle filter's stride, and the
-future Monte Carlo runs on the same 4x-relaxed leap step as the particle
-filter's posterior rollouts (identical O(tau) bias on both sides of the
-comparison; the replayed history always uses the data-generating step) --
-wall-clock reductions, recorded.
+Decision states are taken at the particle filter's stride (wall-clock
+reduction, recorded).  The future Monte Carlo runs on the data-generating
+leap step: a relaxed-step variant was measured to inflate outcome
+probabilities enough to push the floor above the realized base rate at the
+light level (an upward bias a *floor* must not carry), and was reverted --
+the investigation is recorded in docs/decisions.md.  Per-state episode ids
+are saved so comparisons can be restricted to a predictor's episode
+subset.
 """
 
 import json
@@ -42,8 +45,7 @@ DATA_DIR = ROOT / "data" / "e03"
 
 LEVELS = ("light", "moderate", "heavy")
 DEC_STRIDE = 2      # match the particle filter's decision grid
-N_REPS = 64
-ROLLOUT_RELAX = 4.0  # leap-step relaxation for the future MC (as in the PF)
+N_REPS = 48
 SEED_BASE = 700_000
 
 
@@ -72,13 +74,6 @@ def episode_states(ep: Episode, t_dec: np.ndarray):
     return states
 
 
-def relaxed(cfg):
-    from streamfno.sim import SimConfig
-    return SimConfig(**{**cfg.__dict__,
-                        "tau_jump_cap": cfg.tau_jump_cap * ROLLOUT_RELAX,
-                        "tau_dt_max": cfg.tau_dt_max * ROLLOUT_RELAX})
-
-
 def main():
     t0 = time.time()
     ecfg = EventConfig.load(E02 / "event_config.json")
@@ -87,20 +82,20 @@ def main():
     for level in LEVELS:
         rows = [m for m in manifest
                 if m["level"] == level and m["split"] == "test"]
-        floors, ps, ses = [], [], []
+        floors, ps, ses, ep_ids = [], [], [], []
         for r_i, m in enumerate(rows):
             ep = Episode.load(E02 / m["path"])
             t_dec = decision_times(ep, ecfg)[::DEC_STRIDE]
             states = episode_states(ep, t_dec)
-            mc_cfg = relaxed(ep.sim_config)
             for s_i, (q, mod) in enumerate(states):
                 seed = SEED_BASE + 1000 * m["sim_seed"] + s_i
-                p, se = ensemble_outcome_probs(mc_cfg, None, mod,
+                p, se = ensemble_outcome_probs(ep.sim_config, None, mod,
                                                ecfg, N_REPS, seed,
                                                q_exact=q)
                 ps.append(p)
                 ses.append(se)
                 floors.append(np.minimum(p, 1.0 - p))
+                ep_ids.append(m["index"])
             if (r_i + 1) % 4 == 0:
                 print(f"  [{level}] {r_i + 1}/{len(rows)} episodes", flush=True)
         floors = np.array(floors)
@@ -112,6 +107,7 @@ def main():
         out[f"{level}_gamma_se"] = gamma_se
         out[f"{level}_floors"] = floors
         out[f"{level}_p"] = np.array(ps)
+        out[f"{level}_episode_ids"] = np.array(ep_ids)
         print(f"  [{level}] gamma(h): " + " ".join(
             f"{h:g}:{g:.3f}" for h, g in zip(ecfg.lead_times, gamma)),
             flush=True)

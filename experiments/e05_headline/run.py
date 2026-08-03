@@ -97,20 +97,35 @@ def gap_table(lead, genie, res):
     return table, text
 
 
+def pf_episode_subset(level):
+    """Episode indices the particle filter was evaluated on (from its
+    stored per-episode probabilities)."""
+    with np.load(E04 / "pf_probs.npz") as f:
+        return {int(k.rsplit("_", 1)[1]) for k in f.files
+                if k.startswith(f"{level}_test_")}
+
+
 def check_no_crossing(lead, genie, res, tol=0.0):
     """Section-1 rule: no predictor's test error may sit below the genie
-    floor beyond CI/MC uncertainty.  Returns list of violations."""
+    floor beyond CI/MC uncertainty.  The particle filter is compared
+    against the floor restricted to its own episode subset.  Returns the
+    list of violations."""
     bad = []
     for level in ("light", "moderate", "heavy"):
-        g = genie[f"{level}_gamma"]
+        g_all = genie[f"{level}_gamma"]
         g_se = genie[f"{level}_gamma_se"]
+        floors = genie[f"{level}_floors"]
+        ep_ids = genie[f"{level}_episode_ids"]
+        pf_sel = np.isin(ep_ids, sorted(pf_episode_subset(level)))
+        g_pf = floors[pf_sel].mean(axis=0)
         lr = res["levels"][level]
         for j, h in enumerate(lead):
             for name in STYLE:
+                floor_j = g_pf[j] if name == "pf" else g_all[j]
                 hi_ci = lr[str(h)][name]["error_ci"][1]
-                if hi_ci < g[j] - 2 * g_se[j] - tol:
+                if hi_ci < floor_j - 2 * g_se[j] - tol:
                     bad.append((level, h, name, lr[str(h)][name]["error"],
-                                float(g[j])))
+                                float(floor_j)))
     return bad
 
 
