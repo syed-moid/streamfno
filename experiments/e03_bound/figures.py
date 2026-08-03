@@ -14,13 +14,17 @@ DATA_DIR = ROOT / "data" / "e03"
 FIG_DIR = ROOT / "figures"
 
 
-def bound_figure(lc):
+def bound_figure(lc, genie):
     h = lc["lead_times"]
-    fig, ax = plt.subplots(figsize=(5.8, 4.0))
+    fig, ax = plt.subplots(figsize=(6.2, 4.2))
     for level, color in (("light", "C0"), ("moderate", "C1"), ("heavy", "C3")):
         d = lc[f"{level}_delta_min"]
-        ax.plot(h, d, f"{color}o-", ms=4, label=fr"$\delta_{{\min}}(h)$ {level}")
-        ax.fill_between(h, 0.0, d, color=color, alpha=0.10)
+        ax.plot(h, d, f"{color}o--", ms=4,
+                label=fr"$\delta_{{\min}}$ {level} (worst-case state)")
+        if genie is not None:
+            g = genie[f"{level}_gamma"]
+            ax.plot(h, g, f"{color}s-", ms=4,
+                    label=fr"$\gamma$ {level} (dataset floor)")
     ax.axhline(0.5, color="0.5", lw=0.8, ls=":")
     ax.set_xscale("log")
     ax.set_xticks(h)
@@ -77,9 +81,11 @@ def margins_figure(mg):
 def main():
     FIG_DIR.mkdir(exist_ok=True)
     lc = np.load(DATA_DIR / "lecam.npz", allow_pickle=True)
+    genie_path = DATA_DIR / "genie.npz"
+    genie = np.load(genie_path) if genie_path.exists() else None
     div = json.loads((DATA_DIR / "divergence.json").read_text())
     mg = np.load(DATA_DIR / "margins.npz")
-    bound_figure(lc)
+    bound_figure(lc, genie)
     divergence_figure(div)
     margins_figure(mg)
     print(f"e03 figures written to {FIG_DIR}")

@@ -33,6 +33,14 @@ channel, and it grows with lead time h.
 3. **Margins.** Whitened observation-space distance from test-episode
    decision states to the nearest opposite-label state, per level — is the
    bound typically informative (margins in the KL < 2 zone) or vacuous?
+4. **Genie floor (addendum, `genie.py`).** δ_min is a worst-case-state
+   statement; measured average predictor error can legitimately sit below
+   it where hard states are rare. To make the "no predictor can enter"
+   comparison enforceable against measured test error, γ(h) = mean over
+   test decision states of min(p, 1−p), with p(θ) estimated by seeded MC
+   from the exactly replayed hidden state — the average error of a
+   state-omniscient predictor, which no telemetry predictor can beat in
+   expectation (data processing).
 
 ## Sanity requirements (checked and recorded in `data/e03/sanity.json`)
 

@@ -116,18 +116,22 @@ def _sample_backlog(rho: np.ndarray, n: int, buffer_depth: int,
     return np.rint(x * buffer_depth).astype(np.int64)
 
 
-def ensemble_outcome_probs(sim_cfg: SimConfig, rho: np.ndarray,
+def ensemble_outcome_probs(sim_cfg: SimConfig, rho: np.ndarray | None,
                            mod_state: int, ecfg: EventConfig,
-                           n_reps: int, seed: int
+                           n_reps: int, seed: int,
+                           q_exact: np.ndarray | None = None
                            ) -> tuple[np.ndarray, np.ndarray]:
     """P(E_h | theta) by vectorized simulator Monte Carlo.
 
-    theta = (density rho, shared-modulator state); n_reps independent
+    theta = (lag configuration, shared-modulator state); n_reps independent
     replicas of the N-partition system are packed into one TauLeapSim (one
     modulator group and one block of broker classes per replica) and run
     over (0, h_max]; E_h is evaluated with the dataset's smoothed-flux
-    definition.  Returns (p_hat, standard error) per lead time; both are
-    monotone-coupled across h (same runs).
+    definition.  The lag configuration is either sampled iid from a density
+    ``rho`` (mean-field hypothesis states) or replicated exactly from a
+    backlog vector ``q_exact`` in partition order (genie evaluation of a
+    known hidden state).  Returns (p_hat, standard error) per lead time;
+    both are monotone-coupled across h (same runs).
     """
     n, c = sim_cfg.n_partitions, sim_cfg.n_brokers
     dt = sim_cfg.dt_sample
@@ -138,7 +142,10 @@ def ensemble_outcome_probs(sim_cfg: SimConfig, rho: np.ndarray,
     rep = np.repeat(np.arange(n_reps, dtype=np.int64), n)
     classes = rep * c + np.tile(np.arange(n, dtype=np.int64) % c, n_reps)
     rng = np.random.default_rng(seed)
-    q0 = _sample_backlog(rho, n_reps * n, sim_cfg.buffer_depth, rng)
+    if q_exact is not None:
+        q0 = np.tile(np.asarray(q_exact, dtype=np.int64), n_reps)
+    else:
+        q0 = _sample_backlog(rho, n_reps * n, sim_cfg.buffer_depth, rng)
     sim = TauLeapSim(big, rng=rng, classes=classes, n_classes=n_reps * c,
                      mmpp_groups=rep,
                      mmpp_state=np.full(n_reps, mod_state, dtype=np.int64)

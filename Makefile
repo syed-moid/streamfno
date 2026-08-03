@@ -25,6 +25,7 @@ e02:
 
 e03:
 	uv run python experiments/e03_bound/run.py
+	uv run python experiments/e03_bound/genie.py
 	uv run python experiments/e03_bound/figures.py
 
 e04:
