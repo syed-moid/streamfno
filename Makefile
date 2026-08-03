@@ -1,4 +1,4 @@
-.PHONY: setup test lint e00 e01 e02 figures
+.PHONY: setup test lint e00 e01 e02 e03 e04 e05 figures
 
 setup:
 	uv venv
@@ -23,6 +23,20 @@ e01:
 e02:
 	uv run python experiments/e02_dataset/run.py
 
+e03:
+	uv run python experiments/e03_bound/run.py
+	uv run python experiments/e03_bound/figures.py
+
+e04:
+	uv run python experiments/e04_predictors/run.py
+	uv run python experiments/e04_predictors/figures.py
+
+e05:
+	uv run python experiments/e05_headline/run.py
+
 figures:
 	uv run python experiments/e00_t1_convergence/figures.py
 	uv run python experiments/e01_spectral_decay/figures.py
+	uv run python experiments/e03_bound/figures.py
+	uv run python experiments/e04_predictors/figures.py
+	uv run python experiments/e05_headline/run.py
