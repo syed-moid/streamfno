@@ -39,12 +39,31 @@ def test_mass_conservation_and_positivity():
     assert np.all(np.diff(res.regulator_cum[:, 0]) >= -1e-14)
 
 
+def test_stationary_regulator_balances_drift():
+    """Constant supercritical b > 0: at stationarity the upper-wall regulator
+    (local-time) rate (a/2) rho(1) must balance the drift, dK/dt -> b."""
+    b, a = 0.25, 0.05
+    res = solve_fp(_uniform_rho0(200), lambda x, m: b * np.ones_like(x), a,
+                   t_end=20.0, dt=2e-3)
+    exact = 0.5 * a * stationary_exponential(np.array([1.0]), b, a)[0]
+    assert abs(exact - b) < 1e-3  # sanity of the closed form itself
+    # rho(1) is approximated by the last cell average (O(h) low in the
+    # boundary layer), so allow a few percent
+    assert abs(res.regulator_rate[-1, 0] - b) / b < 0.05
+
+
 def test_subcritical_regulator_stays_negligible():
+    """Drift away from the wall and no initial mass near it: the local-time
+    regulator at x = 1 must stay negligible."""
     b, a = -0.3, 0.04
-    res = solve_fp(_uniform_rho0(100), lambda x, m: b * np.ones_like(x), a,
+    m_cells = 100
+    x = (np.arange(m_cells) + 0.5) / m_cells
+    rho0 = np.exp(-0.5 * ((x - 0.2) / 0.05) ** 2)
+    rho0 /= rho0.sum() / m_cells
+    res = solve_fp(rho0[None, :], lambda x_, m: b * np.ones_like(x_), a,
                    t_end=10.0, dt=2e-3)
-    # drift away from the wall: no rejected work
-    assert res.regulator_cum[-1, 0] < 1e-6
+    # stationary rho(1) ~ 5e-6, so the local-time rate is ~1e-7 per unit time
+    assert res.regulator_cum[-1, 0] < 1e-5
 
 
 def test_transport_limit_advects_profile():

@@ -82,13 +82,22 @@ resolutions e00 needs).
 
 **Regulated boundary at x = 1.** The wall is mass-conserving (zero numerical
 flux), matching the simulator, where saturated partitions remain in the
-system at X = 1; the advective flux the wall cancels, max(b(1,m),0)·ρ(1,t),
-is accumulated into K_B(t) as the PDE counterpart of the rejection counter.
-Rejected: an absorbing/outflow boundary that removes the excess mass from the
-domain — it drains total mass, which breaks the probability-density
-comparison with the (mass-conserving) empirical measure and does not match
-rejection semantics (a saturated partition stays saturated; its unserved
-backlog is not destroyed).
+system at X = 1; the Skorokhod regulator (local-time) rate
+K̇ = (a/2)·ρ(1,t) + b⁺(1)·(mass of last cell) is accumulated into K_B(t) as
+the PDE counterpart of the rejection counter, in the simulator's units
+(normalized work per partition per unit time). The (a/2)ρ(1) term follows
+from the mean balance d/dt E[X] = E[b] − K̇ + L̇ of the reflected diffusion
+and balances the drift at stationarity (K̇ → b for constant supercritical
+coefficients — verified against the closed form in tests, and consistent
+with the simulator's measured J_B). Rejected alternatives: (i) an
+absorbing/outflow boundary that removes excess mass — it drains total mass,
+breaking the probability-density comparison with the mass-conserving
+empirical measure, and does not match rejection semantics (a saturated
+partition stays saturated; its backlog is not destroyed); (ii) the cancelled
+advective flux max(b,0)·ρ(1,t) as the regulator rate — dimensionally a
+probability flux, not a work rate; it overestimates the simulator's J_B by
+~20× in the near-saturation configuration (first implementation; caught by
+cross-checking against the simulator's boundary flux and fixed).
 
 **Convergence policy.** Implicit Euler is unconditionally stable but dt also
 freezes the nonlinear coupling, so every production configuration is checked

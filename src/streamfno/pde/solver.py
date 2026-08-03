@@ -24,9 +24,17 @@ Boundaries:
 - x = 0: no-flux (reflecting).
 - x = 1: regulated.  The wall is mass-conserving (the numerical flux through
   x = 1 is zero, matching the simulator where saturated partitions remain in
-  the system at X = 1), and the advective flux the wall cancels,
-  max(b(1, m), 0) * rho(1, t), is accumulated into the regulator K_B(t) -- the
-  PDE counterpart of the simulator's rejected-work counter J_B.
+  the system at X = 1); the Skorokhod regulator (local-time) rate of the
+  reflected diffusion,
+
+      dK/dt = a(1, m)/2 * rho(1, t)  +  max(b(1, m), 0) * rho_M * h,
+
+  is accumulated into K_B(t) -- the PDE counterpart of the simulator's
+  rejected-work counter J_B, in the same units (normalized lag per partition
+  per unit time).  The first term is the diffusive local-time rate (for
+  constant coefficients it balances the drift at stationarity, dK/dt -> b);
+  the second is the transport (a = 0) limit, where rejection comes from the
+  wall atom, approximated by the mass of the last cell.
 """
 
 from __future__ import annotations
@@ -132,19 +140,27 @@ def solve_fp(
     a_fn = diffusion if callable(diffusion) else (lambda x, m, _a=float(diffusion):
                                                   np.full_like(x, _a))
 
+    def regulator_rate(rho_now: np.ndarray, means_now: np.ndarray) -> np.ndarray:
+        one = np.array([1.0])
+        out = np.zeros(n_classes)
+        for c in range(n_classes):
+            m = float(means_now[c])
+            a1 = float(np.asarray(a_fn(one, m))[0])
+            b1 = float(np.asarray(drift(one, m))[0])
+            out[c] = 0.5 * a1 * rho_now[c, -1] + max(b1, 0.0) * rho_now[c, -1] * h
+        return out
+
     times = [0.0]
     reg_cum = np.zeros(n_classes)
     means0 = rho @ x_centers * h
     out_rho = [rho.copy()]
-    out_rate = [np.array([max(float(np.asarray(drift(np.array([1.0]), means0[c]))[0]), 0.0)
-                          * rho[c, -1] for c in range(n_classes)])]
+    out_rate = [regulator_rate(rho, means0)]
     out_cum = [reg_cum.copy()]
     out_mean = [means0.copy()]
 
     for step in range(1, n_steps + 1):
         masses = rho.sum(axis=1) * h
         means = rho @ x_centers * h / np.maximum(masses, 1e-300)
-        rate_now = np.zeros(n_classes)
         for c in range(n_classes):
             m = float(means[c])
             b_f = np.broadcast_to(np.asarray(drift(x_faces, m), dtype=float),
@@ -177,8 +193,7 @@ def solve_fp(
             ab[2, :-1] = -dt * lower
             rho[c] = solve_banded((1, 1), ab, rho[c])
 
-            # regulator: advective flux the reflecting wall at x=1 cancels
-            rate_now[c] = max(float(b_f[-1]), 0.0) * rho[c, -1]
+        rate_now = regulator_rate(rho, means)
         reg_cum = reg_cum + rate_now * dt
 
         if step % every == 0 or step == n_steps:
