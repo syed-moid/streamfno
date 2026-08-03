@@ -6,7 +6,7 @@ first-class outputs; see config.py for units and scaling conventions.
 """
 
 from .config import SimConfig
-from .engine import simulate
+from .engine import TauLeapSim, simulate
 from .results import SimResult
 
-__all__ = ["SimConfig", "SimResult", "simulate"]
+__all__ = ["SimConfig", "SimResult", "TauLeapSim", "simulate"]

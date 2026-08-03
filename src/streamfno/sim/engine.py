@@ -13,6 +13,15 @@ Boundary semantics (both engines):
   rejected work.  The per-class count of blocked up-jumps per sampling
   interval is the boundary-flux output J_B(t).
 
+MMPP modulator topology: with ``mmpp_shared = False`` each partition carries
+an independent 2-state modulator (at large N the aggregate arrival rate is
+then nearly constant by averaging); with ``mmpp_shared = True`` a single
+modulator drives every partition, producing coherent bursts that move the
+whole system between load regimes.  Internally both are the special cases
+"one group per partition" / "one group total" of a group-structured
+modulator, which also lets an ensemble of independent replicas (particles)
+be advanced as one vectorized system.
+
 Tau-leaping approximations (documented in docs/decisions.md):
 - Poisson jump counts per step with rates frozen at the step start
   (explicit tau-leap); the step is capped so the expected number of jumps
@@ -38,7 +47,7 @@ from scipy.special import expit
 from .config import SimConfig
 from .results import SimResult
 
-__all__ = ["simulate"]
+__all__ = ["TauLeapSim", "simulate"]
 
 
 def _broker_classes(cfg: SimConfig) -> tuple[np.ndarray, np.ndarray]:
@@ -48,24 +57,17 @@ def _broker_classes(cfg: SimConfig) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _service_rates(cfg: SimConfig, classes: np.ndarray, sizes: np.ndarray,
-                   x: np.ndarray) -> np.ndarray:
+                   n_classes: int, x: np.ndarray) -> np.ndarray:
     """Per-partition service rate mu_i (normalized-lag units per unit time).
 
     A broker class's capacity degrades as the mean lag of its own partitions
     rises: mu(m_c) = mu0 * (1 - drop * sigmoid((m_c - theta)/width)).
     """
-    m_c = np.bincount(classes, weights=x, minlength=cfg.n_brokers) / sizes
+    m_c = np.bincount(classes, weights=x, minlength=n_classes) / sizes
     g = 1.0 - cfg.degradation_drop * expit(
         (m_c - cfg.degradation_theta) / cfg.degradation_width
     )
     return (cfg.mu0 * g)[classes]
-
-
-def _arrival_rates(cfg: SimConfig, mmpp_state: np.ndarray | None) -> np.ndarray:
-    """Per-partition arrival-side netput rate lam_i (same units as mu)."""
-    if cfg.arrival == "poisson":
-        return np.full(cfg.n_partitions, cfg.lam)
-    return np.where(mmpp_state == 1, cfg.lam_high, cfg.lam_low)
 
 
 def _jump_rates(cfg: SimConfig, lam: np.ndarray, mu: np.ndarray
@@ -83,17 +85,146 @@ def _jump_rates(cfg: SimConfig, lam: np.ndarray, mu: np.ndarray
     return B * lam, B * mu
 
 
-def _initial_backlog(cfg: SimConfig, rng: np.random.Generator) -> np.ndarray:
+def _initial_backlog(cfg: SimConfig, rng: np.random.Generator,
+                     n: int | None = None) -> np.ndarray:
     """iid truncated-Gaussian initial lags, quantized to the lattice."""
+    n = cfg.n_partitions if n is None else n
     if cfg.init_sd == 0.0:
-        x = np.full(cfg.n_partitions, cfg.init_x0)
+        x = np.full(n, cfg.init_x0)
     else:
-        x = rng.normal(cfg.init_x0, cfg.init_sd, size=cfg.n_partitions)
+        x = rng.normal(cfg.init_x0, cfg.init_sd, size=n)
         bad = (x < 0.0) | (x > 1.0)
         while bad.any():
             x[bad] = rng.normal(cfg.init_x0, cfg.init_sd, size=int(bad.sum()))
             bad = (x < 0.0) | (x > 1.0)
     return np.rint(x * cfg.buffer_depth).astype(np.int64)
+
+
+def _mmpp_groups(cfg: SimConfig, n: int) -> np.ndarray:
+    if cfg.mmpp_shared:
+        return np.zeros(n, dtype=np.int64)
+    return np.arange(n, dtype=np.int64)
+
+
+def _init_mmpp_state(cfg: SimConfig, rng: np.random.Generator,
+                     n_groups: int) -> np.ndarray:
+    p_high = cfg.r_low_high / (cfg.r_low_high + cfg.r_high_low)
+    return (rng.random(n_groups) < p_high).astype(np.int64)
+
+
+class TauLeapSim:
+    """Incrementally steppable tau-leap system.
+
+    Used by simulate() for whole runs and by filtering/prediction code that
+    must interleave observation updates with propagation.  The constructor
+    arguments beyond ``cfg`` exist so an ensemble of independent replicas
+    can be packed into one vectorized system:
+
+    classes / n_classes:
+        Per-partition class ids for the mean-field coupling and rejection
+        accounting (default: broker classes from cfg).  Replicas are kept
+        independent by giving each its own block of class ids.
+    mmpp_groups:
+        Per-partition modulator-group ids (default from cfg.mmpp_shared).
+        Each group carries one 2-state modulator.
+    q, mmpp_state, t:
+        Optional explicit initial state (defaults: seeded initial law).
+    """
+
+    def __init__(self, cfg: SimConfig, rng: np.random.Generator | None = None,
+                 classes: np.ndarray | None = None, n_classes: int | None = None,
+                 mmpp_groups: np.ndarray | None = None,
+                 q: np.ndarray | None = None,
+                 mmpp_state: np.ndarray | None = None, t: float = 0.0):
+        self.cfg = cfg
+        self.rng = np.random.default_rng(cfg.seed) if rng is None else rng
+        if classes is None:
+            classes, sizes = _broker_classes(cfg)
+            n_classes = cfg.n_brokers
+        else:
+            classes = np.asarray(classes, dtype=np.int64)
+            n_classes = int(n_classes if n_classes is not None else classes.max() + 1)
+            sizes = np.bincount(classes, minlength=n_classes)
+        self.classes = classes
+        self.n_classes = n_classes
+        self.sizes = sizes
+        self.n = classes.size
+        self.q = _initial_backlog(cfg, self.rng, self.n) if q is None else q
+        if cfg.arrival == "mmpp":
+            self.groups = (_mmpp_groups(cfg, self.n) if mmpp_groups is None
+                           else np.asarray(mmpp_groups, dtype=np.int64))
+            self.n_groups = int(self.groups.max()) + 1
+            self.mmpp_state = (_init_mmpp_state(cfg, self.rng, self.n_groups)
+                               if mmpp_state is None else mmpp_state)
+        else:
+            self.groups = None
+            self.n_groups = 0
+            self.mmpp_state = None
+        self.t = t
+
+    def arrival_rates(self) -> np.ndarray:
+        cfg = self.cfg
+        if cfg.arrival == "poisson":
+            return np.full(self.n, cfg.lam)
+        lam_by_group = np.where(self.mmpp_state == 1, cfg.lam_high, cfg.lam_low)
+        return lam_by_group[self.groups]
+
+    def advance(self, duration: float) -> np.ndarray:
+        """Advance by ``duration`` time units; return per-class blocked
+        up-jump counts (rejected work) accumulated over the interval."""
+        cfg = self.cfg
+        B = cfg.buffer_depth
+        t_stop = self.t + duration
+        rejected = np.zeros(self.n_classes, dtype=np.int64)
+        while self.t < t_stop - 1e-12:
+            lam = self.arrival_rates()
+            mu = _service_rates(cfg, self.classes, self.sizes, self.n_classes,
+                                self.q / B)
+            u, d = _jump_rates(cfg, lam, mu)
+            rate_max = float(np.max(u + d))
+            tau = min(cfg.tau_dt_max, cfg.tau_jump_cap / rate_max,
+                      t_stop - self.t)
+
+            arrivals = self.rng.poisson(u * tau)
+            services = self.rng.poisson(d * tau)
+            services_first = self.rng.random(self.n) < 0.5
+            # services-first branch
+            q_sf = np.maximum(self.q - services, 0) + arrivals
+            over_sf = np.maximum(q_sf - B, 0)
+            # arrivals-first branch
+            q_plus = self.q + arrivals
+            over_af = np.maximum(q_plus - B, 0)
+            q_af = np.maximum(np.minimum(q_plus, B) - services, 0)
+            over = np.where(services_first, over_sf, over_af)
+            self.q = np.where(services_first, np.minimum(q_sf, B), q_af)
+            rejected += np.bincount(self.classes, weights=over,
+                                    minlength=self.n_classes).astype(np.int64)
+            if self.mmpp_state is not None:
+                p_up = -np.expm1(-cfg.r_low_high * tau)
+                p_dn = -np.expm1(-cfg.r_high_low * tau)
+                r = self.rng.random(self.n_groups)
+                flip = np.where(self.mmpp_state == 0, r < p_up, r < p_dn)
+                self.mmpp_state = np.where(flip, 1 - self.mmpp_state,
+                                           self.mmpp_state)
+            self.t += tau
+        return rejected
+
+    def clone(self) -> "TauLeapSim":
+        """Independent copy sharing nothing mutable; the clone gets a child
+        RNG spawned from this system's stream."""
+        new = object.__new__(TauLeapSim)
+        new.cfg = self.cfg
+        new.rng = self.rng.spawn(1)[0]
+        new.classes = self.classes
+        new.n_classes = self.n_classes
+        new.sizes = self.sizes
+        new.n = self.n
+        new.q = self.q.copy()
+        new.groups = self.groups
+        new.n_groups = self.n_groups
+        new.mmpp_state = None if self.mmpp_state is None else self.mmpp_state.copy()
+        new.t = self.t
+        return new
 
 
 class _Recorder:
@@ -147,53 +278,12 @@ def simulate(cfg: SimConfig) -> SimResult:
 
 
 def _simulate_tau_leap(cfg: SimConfig) -> SimResult:
-    rng = np.random.default_rng(cfg.seed)
-    classes, sizes = _broker_classes(cfg)
-    q = _initial_backlog(cfg, rng)
-    mmpp_state = None
-    if cfg.arrival == "mmpp":
-        p_high = cfg.r_low_high / (cfg.r_low_high + cfg.r_high_low)
-        mmpp_state = (rng.random(cfg.n_partitions) < p_high).astype(np.int64)
-
-    rec = _Recorder(cfg, classes, sizes)
-    rej_interval = np.zeros(cfg.n_brokers, dtype=np.int64)
-    rec.record(q, rej_interval)
-
-    B = cfg.buffer_depth
-    t = 0.0
+    sim = TauLeapSim(cfg)
+    rec = _Recorder(cfg, sim.classes, sim.sizes)
+    rec.record(sim.q, np.zeros(cfg.n_brokers, dtype=np.int64))
     while rec.k < rec.n_samples:
-        lam = _arrival_rates(cfg, mmpp_state)
-        mu = _service_rates(cfg, classes, sizes, q / B)
-        u, d = _jump_rates(cfg, lam, mu)
-        rate_max = float(np.max(u + d))
-        tau = min(cfg.tau_dt_max, cfg.tau_jump_cap / rate_max, rec.next_time - t)
-
-        arrivals = rng.poisson(u * tau)
-        services = rng.poisson(d * tau)
-        services_first = rng.random(cfg.n_partitions) < 0.5
-        # services-first branch
-        q_sf = np.maximum(q - services, 0) + arrivals
-        over_sf = np.maximum(q_sf - B, 0)
-        # arrivals-first branch
-        q_plus = q + arrivals
-        over_af = np.maximum(q_plus - B, 0)
-        q_af = np.maximum(np.minimum(q_plus, B) - services, 0)
-        over = np.where(services_first, over_sf, over_af)
-        q = np.where(services_first, np.minimum(q_sf, B), q_af)
-        rej_interval += np.bincount(classes, weights=over, minlength=cfg.n_brokers).astype(
-            np.int64
-        )
-        if mmpp_state is not None:
-            p_up = -np.expm1(-cfg.r_low_high * tau)
-            p_dn = -np.expm1(-cfg.r_high_low * tau)
-            r = rng.random(cfg.n_partitions)
-            flip = np.where(mmpp_state == 0, r < p_up, r < p_dn)
-            mmpp_state = np.where(flip, 1 - mmpp_state, mmpp_state)
-
-        t += tau
-        if t >= rec.next_time - 1e-12:
-            rec.record(q, rej_interval)
-            rej_interval[:] = 0
+        rejected = sim.advance(rec.next_time - sim.t)
+        rec.record(sim.q, rejected)
     return rec.result()
 
 
@@ -205,9 +295,12 @@ def _simulate_gillespie(cfg: SimConfig) -> SimResult:
     q = _initial_backlog(cfg, rng)
     n = cfg.n_partitions
     mmpp_state = None
+    groups = None
+    n_groups = 0
     if cfg.arrival == "mmpp":
-        p_high = cfg.r_low_high / (cfg.r_low_high + cfg.r_high_low)
-        mmpp_state = (rng.random(n) < p_high).astype(np.int64)
+        groups = _mmpp_groups(cfg, n)
+        n_groups = int(groups.max()) + 1
+        mmpp_state = _init_mmpp_state(cfg, rng, n_groups)
 
     rec = _Recorder(cfg, classes, sizes)
     rej_interval = np.zeros(cfg.n_brokers, dtype=np.int64)
@@ -216,13 +309,16 @@ def _simulate_gillespie(cfg: SimConfig) -> SimResult:
     B = cfg.buffer_depth
     t = 0.0
     while rec.k < rec.n_samples:
-        lam = _arrival_rates(cfg, mmpp_state)
-        mu = _service_rates(cfg, classes, sizes, q / B)
+        if cfg.arrival == "poisson":
+            lam = np.full(n, cfg.lam)
+        else:
+            lam = np.where(mmpp_state == 1, cfg.lam_high, cfg.lam_low)[groups]
+        mu = _service_rates(cfg, classes, sizes, cfg.n_brokers, q / B)
         u, d = _jump_rates(cfg, lam, mu)
         if mmpp_state is not None:
             sw = np.where(mmpp_state == 0, cfg.r_low_high, cfg.r_high_low)
         else:
-            sw = np.zeros(n)
+            sw = np.zeros(0)
         rates = np.concatenate([u, d, sw])
         total = float(rates.sum())
         if total <= 0.0:
@@ -240,16 +336,17 @@ def _simulate_gillespie(cfg: SimConfig) -> SimResult:
             break
         t = t_next
         idx = int(np.searchsorted(np.cumsum(rates), rng.random() * total))
-        i = idx % n
-        kind = idx // n
-        if kind == 0:  # up-jump
-            if q[i] == B:
-                rej_interval[classes[i]] += 1
-            else:
-                q[i] += 1
-        elif kind == 1:  # down-jump
-            if q[i] > 0:
-                q[i] -= 1
-        else:  # MMPP modulator switch
-            mmpp_state[i] = 1 - mmpp_state[i]
+        if idx < 2 * n:
+            i = idx % n
+            if idx < n:  # up-jump
+                if q[i] == B:
+                    rej_interval[classes[i]] += 1
+                else:
+                    q[i] += 1
+            else:  # down-jump
+                if q[i] > 0:
+                    q[i] -= 1
+        else:  # MMPP modulator switch (per group)
+            g = idx - 2 * n
+            mmpp_state[g] = 1 - mmpp_state[g]
     return rec.result()

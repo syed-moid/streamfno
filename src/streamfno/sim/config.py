@@ -66,8 +66,13 @@ class SimConfig:
         Seed for the run's random generator; every run is fully seeded.
     arrival:
         "poisson" (constant rate ``lam``) or "mmpp" (2-state Markov-modulated
-        Poisson: rate lam_low / lam_high, per-partition modulator with
-        switching rates r_low_high, r_high_low).
+        Poisson: rate lam_low / lam_high with switching rates r_low_high,
+        r_high_low).
+    mmpp_shared:
+        False (default): each partition carries an independent modulator (at
+        large N the aggregate rate is nearly constant by averaging).  True:
+        one modulator drives all partitions -- coherent bursts that move the
+        whole system between load regimes.
     lam, lam_low, lam_high, r_low_high, r_high_low:
         Arrival-side netput parameters, normalized-lag units per unit time.
     mu0:
@@ -100,6 +105,7 @@ class SimConfig:
     dt_sample: float = 0.5
     n_bins: int = 128
     arrival: str = "poisson"
+    mmpp_shared: bool = False
     lam: float = 0.55
     lam_low: float = 0.3
     lam_high: float = 0.9
