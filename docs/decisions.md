@@ -171,3 +171,29 @@ absolute W1 threshold sat below the measured within-engine seed noise of the
 small config (time-correlated samples), so it could fail on noise alone; the
 sharp criterion is now cross-engine distance ≲ within-engine seed noise, with
 a loose absolute backstop.
+
+---
+
+## 2026-08-02 — experiment e01 (B5)
+
+**B = 256 with 128 histogram bins.** B is an exact multiple of the bin count
+so lag-lattice atoms map evenly (2 sites per bin); otherwise the re-binning
+sawtooth aliases fake high-k content into exactly the spectra under study.
+
+**Instrument floors, measured and drawn.** Two floors limit the empirical
+spectra: (i) an incoherent sampling-noise floor, estimated per run by the
+split-half difference spectrum and drawn on every spectrum plot; (ii) a
+coherent residual tau-leap-bias plateau, diagnosed by scaling runs — it is
+independent of N (unchanged at N=4000, ruling out finite-N mean-field
+corrections) and ~linear in the leap step (6.7e-3·ĉ0 at τ≈1.9e-3 vs
+1.1e-3·ĉ0 at τ≈4.8e-4, with B=512 at equal τ matching). e01 therefore runs
+at a 4× smaller step (jump cap 1.25) and fits over k ∈ [3,16], the range
+where the moderate-load signal stays above the plateau. Rejected: fitting to
+k=40 (measures the instrument, not the density: the moderate-load fit came
+out flat/negative while the noise-free PDE reference gave s≈2.0) and pushing
+τ further down (another 4× costs ~1h per e01 run for one extra octave of
+usable k).
+
+**Stationary averaging over t ≥ 80 and 8 seeds.** The moderate load is
+near-critical (b ≈ −0.05), with slow mixing; the long window keeps the
+time-correlated sampling floor below the fit range.
