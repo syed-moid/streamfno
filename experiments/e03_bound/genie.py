@@ -96,11 +96,15 @@ def main():
             ep = Episode.load(E02 / m["path"])
             t_dec = decision_times(ep, ecfg)[::DEC_STRIDE]
             states = episode_states(ep, t_dec)
+            k_smooth = max(1, round(ecfg.flux_window / ep.sim_config.dt_sample))
             for s_i, (q, mod) in enumerate(states):
                 seed = SEED_BASE + 1000 * m["sim_seed"] + s_i
+                kt = int(round(t_dec[s_i] / ep.sim_config.dt_sample))
+                pre_flux = ep.flux_hidden[max(0, kt - k_smooth + 1):kt + 1]
                 p, se = ensemble_outcome_probs(ep.sim_config, None, mod,
                                                ecfg, N_REPS, seed,
-                                               q_exact=q)
+                                               q_exact=q,
+                                               flux_history=pre_flux)
                 ps.append(p)
                 ses.append(se)
                 floors.append(np.minimum(p, 1.0 - p))

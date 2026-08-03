@@ -119,7 +119,8 @@ def _sample_backlog(rho: np.ndarray, n: int, buffer_depth: int,
 def ensemble_outcome_probs(sim_cfg: SimConfig, rho: np.ndarray | None,
                            mod_state: int, ecfg: EventConfig,
                            n_reps: int, seed: int,
-                           q_exact: np.ndarray | None = None
+                           q_exact: np.ndarray | None = None,
+                           flux_history: np.ndarray | None = None
                            ) -> tuple[np.ndarray, np.ndarray]:
     """P(E_h | theta) by vectorized simulator Monte Carlo.
 
@@ -130,8 +131,13 @@ def ensemble_outcome_probs(sim_cfg: SimConfig, rho: np.ndarray | None,
     definition.  The lag configuration is either sampled iid from a density
     ``rho`` (mean-field hypothesis states) or replicated exactly from a
     backlog vector ``q_exact`` in partition order (genie evaluation of a
-    known hidden state).  Returns (p_hat, standard error) per lead time;
-    both are monotone-coupled across h (same runs).
+    known hidden state).  ``flux_history`` (most recent last, at dt_sample
+    cadence) seeds the trailing smoothing window so the event statistic in
+    the first flux_window time units matches the dataset's, whose smoothed
+    flux at s in (t, t+w] includes realized pre-t flux; omitting it
+    underestimates imminent events at short leads (caught by the e05
+    crossing check).  Returns (p_hat, standard error) per lead time; both
+    are monotone-coupled across h (same runs).
     """
     n, c = sim_cfg.n_partitions, sim_cfg.n_brokers
     dt = sim_cfg.dt_sample
@@ -150,7 +156,10 @@ def ensemble_outcome_probs(sim_cfg: SimConfig, rho: np.ndarray | None,
                      mmpp_groups=rep,
                      mmpp_state=np.full(n_reps, mod_state, dtype=np.int64)
                      if sim_cfg.arrival == "mmpp" else None, q=q0)
-    hist: list[np.ndarray] = [np.zeros(n_reps)]
+    if flux_history is None:
+        hist: list[np.ndarray] = [np.zeros(n_reps)]
+    else:
+        hist = [np.full(n_reps, float(v)) for v in flux_history[-k_smooth + 1:]]
     sup = {h: np.zeros(n_reps) for h in ecfg.lead_times}
     n_steps = round(h_max / dt)
     for step in range(1, n_steps + 1):
