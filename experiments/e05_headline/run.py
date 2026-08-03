@@ -2,9 +2,20 @@
 computed impossibility region, three load-level panels, plus the
 gap-to-the-ceiling table.
 
-Pure assembly: reads e03 (bound curves, sanity) and e04 (predictor metrics)
-outputs; no simulation.  `make e05` regenerates everything end to end from
-saved results.
+Floor semantics (worked out during the e03 crossing investigation; see
+docs/decisions.md): the expectation floor gamma = E[min(p, 1-p)] and the
+measured test error live on different footings -- test labels are one
+episode-clustered outcome draw, and predictors are scored on that same
+draw.  The enforceable comparison is the *measured* error of the
+state-omniscient Bayes predictor (predict 1{p_hat > 1/2} at each replayed
+hidden state, scored on the same labels, same episode bootstrap), computed
+here from the e03 genie output plus the dataset labels.  The crossing rule
+is checked against that measured floor with CI overlap; the expectation
+floor and the worst-case two-point bound are drawn alongside.
+
+Assembly only beyond label recomputation: reads e03 (bounds, genie,
+sanity) and e04 (predictor metrics).  `make e05` regenerates everything
+end to end from saved results.
 """
 
 import json
@@ -16,7 +27,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from streamfno.events import EventConfig, decision_times, label_episode
+from streamfno.obs import Episode
+from streamfno.predictors import metrics_with_ci
+
 ROOT = Path(__file__).resolve().parents[2]
+E02 = ROOT / "data" / "e02"
 E03 = ROOT / "data" / "e03"
 E04 = ROOT / "data" / "e04"
 DATA_DIR = ROOT / "data" / "e05"
@@ -29,20 +45,23 @@ STYLE = {"pf": ("C2", "o", "particle filter"),
 DELTA_TARGET = 0.2
 
 
-def headline_figure(lead, bound, genie, res, sanity):
+def headline_figure(lead, bound, genie, gm_full, res, sanity):
     fig, axes = plt.subplots(1, 3, figsize=(12.5, 4.1), sharey=True)
     for ax, level in zip(axes, ("light", "moderate", "heavy")):
-        g = genie[f"{level}_gamma"]
-        g_lo = g - 2 * genie[f"{level}_gamma_se"]
+        gm = np.array([m["error"] for m in gm_full[level]])
+        gm_lo = np.array([m["error_ci"][0] for m in gm_full[level]])
         ok = sanity["comparable_floor_valid"]
         region_label = ("no predictor with this telemetry can enter"
                         if ok else "computed lower bound (sanity flag; see log)")
-        ax.fill_between(lead, 0.0, np.maximum(g_lo, 0.0), color="0.82",
+        ax.fill_between(lead, 0.0, np.maximum(gm_lo, 0.0), color="0.82",
                         zorder=0, label=region_label)
-        ax.plot(lead, g, "k-", lw=1.4, zorder=1,
-                label=r"$\gamma(h)$ state-omniscient floor")
+        ax.plot(lead, gm, "k-", lw=1.4, zorder=1,
+                label="state-omniscient predictor (measured)")
+        g = genie[f"{level}_gamma"]
+        ax.plot(lead, g, "k-.", lw=1.0, zorder=1,
+                label=r"$\gamma(h)$ expectation floor")
         d = bound[f"{level}_delta_min"]
-        ax.plot(lead, d, "k--", lw=1.1, zorder=1,
+        ax.plot(lead, d, "k--", lw=1.0, zorder=1,
                 label=r"$\delta_{\min}(h)$ two-point, worst-case state")
         lr = res["levels"][level]
         for name, (c, mk, label) in STYLE.items():
@@ -71,29 +90,31 @@ def headline_figure(lead, bound, genie, res, sanity):
     plt.close(fig)
 
 
-def gap_table(lead, genie, res):
+def gap_table(lead, gm_full, res):
     """Largest h with test error < DELTA_TARGET per predictor, vs the
-    largest h at which the genie floor still permits error < DELTA_TARGET."""
+    largest h at which the measured state-omniscient predictor stays below
+    DELTA_TARGET."""
     lines = ["| level | " + " | ".join(STYLE[k][2] for k in STYLE)
-             + " | floor permits |",
+             + " | ceiling permits |",
              "|---|" + "---|" * (len(STYLE) + 1)]
     table = {}
     for level in ("light", "moderate", "heavy"):
         lr = res["levels"][level]
-        g = genie[f"{level}_gamma"]
+        gm = [m["error"] for m in gm_full[level]]
         row = {}
         for name in STYLE:
             hs = [h for h in lead if lr[str(h)][name]["error"] < DELTA_TARGET]
             row[name] = max(hs) if hs else None
-        hs_bound = [h for h, gg in zip(lead, g) if gg <= DELTA_TARGET]
+        hs_bound = [h for h, gg in zip(lead, gm) if gg < DELTA_TARGET]
         row["bound"] = max(hs_bound) if hs_bound else None
         table[level] = row
         fmt = lambda v: f"{v:g}" if v is not None else "none"  # noqa: E731
         lines.append(f"| {level} | " + " | ".join(
             fmt(row[k]) for k in list(STYLE) + ["bound"]) + " |")
     text = (f"Largest lead time h with error < {DELTA_TARGET} "
-            "(test, val-tuned operating points; 'floor permits' from the "
-            "state-omniscient floor gamma)\n\n" + "\n".join(lines) + "\n")
+            "(test, val-tuned operating points; 'ceiling permits' from the "
+            "measured state-omniscient predictor)\n\n" + "\n".join(lines)
+            + "\n")
     return table, text
 
 
@@ -105,27 +126,46 @@ def pf_episode_subset(level):
                 if k.startswith(f"{level}_test_")}
 
 
-def check_no_crossing(lead, genie, res, tol=0.0):
-    """Section-1 rule: no predictor's test error may sit below the genie
-    floor beyond CI/MC uncertainty.  The particle filter is compared
-    against the floor restricted to its own episode subset.  Returns the
-    list of violations."""
+def genie_measured(level, genie, ecfg):
+    """Measured error of the state-omniscient Bayes predictor: predict
+    1{p_hat > 1/2}, scored on the realized test labels at the same states,
+    with episode-bootstrap CIs.  Returns (full-test metrics, PF-subset
+    metrics) per lead time."""
+    manifest = json.loads((E02 / "manifest.json").read_text())
+    rows = [m for m in manifest
+            if m["level"] == level and m["split"] == "test"]
+    labs = []
+    for m in rows:
+        ep = Episode.load(E02 / m["path"])
+        t_dec = decision_times(ep, ecfg)[::2]
+        labs.append(label_episode(ep, ecfg, t_dec)[1])
+    labels = np.concatenate(labs)
+    p = genie[f"{level}_p"]
+    ep_ids = genie[f"{level}_episode_ids"]
+    assert labels.shape == p.shape
+    pf_sel = np.isin(ep_ids, sorted(pf_episode_subset(level)))
+    full, sub = [], []
+    for j in range(labels.shape[1]):
+        full.append(metrics_with_ci(p[:, j], labels[:, j], ep_ids, 0.5))
+        sub.append(metrics_with_ci(p[pf_sel, j], labels[pf_sel, j],
+                                   ep_ids[pf_sel], 0.5))
+    return full, sub
+
+
+def check_no_crossing(lead, gm_full, gm_sub, res, tol=0.0):
+    """Section-1 rule: no predictor's test error may sit below the measured
+    genie-predictor error beyond CI overlap.  The particle filter is
+    compared on its own episode subset.  Returns the list of violations."""
     bad = []
     for level in ("light", "moderate", "heavy"):
-        g_all = genie[f"{level}_gamma"]
-        g_se = genie[f"{level}_gamma_se"]
-        floors = genie[f"{level}_floors"]
-        ep_ids = genie[f"{level}_episode_ids"]
-        pf_sel = np.isin(ep_ids, sorted(pf_episode_subset(level)))
-        g_pf = floors[pf_sel].mean(axis=0)
         lr = res["levels"][level]
         for j, h in enumerate(lead):
             for name in STYLE:
-                floor_j = g_pf[j] if name == "pf" else g_all[j]
+                gm = gm_sub[level][j] if name == "pf" else gm_full[level][j]
                 hi_ci = lr[str(h)][name]["error_ci"][1]
-                if hi_ci < floor_j - 2 * g_se[j] - tol:
+                if hi_ci < gm["error_ci"][0] - tol:
                     bad.append((level, h, name, lr[str(h)][name]["error"],
-                                float(floor_j)))
+                                gm["error"]))
     return bad
 
 
@@ -137,20 +177,28 @@ def main():
     sanity = json.loads((E03 / "sanity.json").read_text())
     res = json.loads((E04 / "results.json").read_text())
     lead = [float(h) for h in res["lead_times"]]
+    ecfg = EventConfig.load(E02 / "event_config.json")
     np.testing.assert_allclose(bound["lead_times"], lead)
+    np.testing.assert_allclose(list(ecfg.lead_times), lead)
 
-    crossings = check_no_crossing(lead, genie, res)
+    gm_full, gm_sub = {}, {}
+    for level in ("light", "moderate", "heavy"):
+        gm_full[level], gm_sub[level] = genie_measured(level, genie, ecfg)
+
+    crossings = check_no_crossing(lead, gm_full, gm_sub, res)
     sanity["comparable_floor_valid"] = not crossings
     if crossings:
-        print("WARNING: predictor error below the genie floor (bug per the "
-              "phase rules; investigate):")
+        print("WARNING: predictor error below the measured genie ceiling "
+              "(bug per the phase rules; investigate):")
         for c in crossings:
             print("  ", c)
     (DATA_DIR / "crossings.json").write_text(json.dumps(
         {"crossings": crossings}, indent=1))
+    (DATA_DIR / "genie_measured.json").write_text(json.dumps(
+        {"full": gm_full, "pf_subset": gm_sub}, indent=1))
 
-    headline_figure(lead, bound, genie, res, sanity)
-    table, text = gap_table(lead, genie, res)
+    headline_figure(lead, bound, genie, gm_full, res, sanity)
+    table, text = gap_table(lead, gm_full, res)
     (DATA_DIR / "gap_table.md").write_text(text)
     (DATA_DIR / "gap_table.json").write_text(json.dumps(table, indent=1))
     print(text)
