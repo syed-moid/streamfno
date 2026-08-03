@@ -85,6 +85,8 @@ def main():
         with np.load(prior) as f:
             for k in f.files:
                 out[k] = f[k]
+    ckpt_dir = DATA_DIR / "genie_ckpt"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
     for level in LEVELS:
         if f"{level}_gamma" in out:
             print(f"  [{level}] already computed; skipping", flush=True)
@@ -93,10 +95,21 @@ def main():
                 if m["level"] == level and m["split"] == "test"]
         floors, ps, ses, ep_ids = [], [], [], []
         for r_i, m in enumerate(rows):
+            ck = ckpt_dir / f"{level}_{m['index']}.npz"
+            if ck.exists():
+                with np.load(ck) as f:
+                    for s_i in range(f["p"].shape[0]):
+                        ps.append(f["p"][s_i])
+                        ses.append(f["se"][s_i])
+                        floors.append(np.minimum(f["p"][s_i],
+                                                 1.0 - f["p"][s_i]))
+                        ep_ids.append(m["index"])
+                continue
             ep = Episode.load(E02 / m["path"])
             t_dec = decision_times(ep, ecfg)[::DEC_STRIDE]
             states = episode_states(ep, t_dec)
             k_smooth = max(1, round(ecfg.flux_window / ep.sim_config.dt_sample))
+            ep_p, ep_se = [], []
             for s_i, (q, mod) in enumerate(states):
                 seed = SEED_BASE + 1000 * m["sim_seed"] + s_i
                 kt = int(round(t_dec[s_i] / ep.sim_config.dt_sample))
@@ -105,10 +118,13 @@ def main():
                                                ecfg, N_REPS, seed,
                                                q_exact=q,
                                                flux_history=pre_flux)
+                ep_p.append(p)
+                ep_se.append(se)
                 ps.append(p)
                 ses.append(se)
                 floors.append(np.minimum(p, 1.0 - p))
                 ep_ids.append(m["index"])
+            np.savez_compressed(ck, p=np.array(ep_p), se=np.array(ep_se))
             if (r_i + 1) % 4 == 0:
                 print(f"  [{level}] {r_i + 1}/{len(rows)} episodes", flush=True)
         floors = np.array(floors)
