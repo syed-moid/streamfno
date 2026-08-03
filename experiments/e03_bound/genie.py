@@ -18,8 +18,11 @@ telemetry predictor can do better in expectation; the telemetry channel
 can only add to this floor.  Monte-Carlo standard errors are reported;
 comparisons use CIs.
 
-Decision states are taken at the particle filter's stride so the
-per-state cost stays within budget (recorded).
+Decision states are taken at the particle filter's stride, and the
+future Monte Carlo runs on the same 4x-relaxed leap step as the particle
+filter's posterior rollouts (identical O(tau) bias on both sides of the
+comparison; the replayed history always uses the data-generating step) --
+wall-clock reductions, recorded.
 """
 
 import json
@@ -39,7 +42,8 @@ DATA_DIR = ROOT / "data" / "e03"
 
 LEVELS = ("light", "moderate", "heavy")
 DEC_STRIDE = 2      # match the particle filter's decision grid
-N_REPS = 96
+N_REPS = 64
+ROLLOUT_RELAX = 4.0  # leap-step relaxation for the future MC (as in the PF)
 SEED_BASE = 700_000
 
 
@@ -68,6 +72,13 @@ def episode_states(ep: Episode, t_dec: np.ndarray):
     return states
 
 
+def relaxed(cfg):
+    from streamfno.sim import SimConfig
+    return SimConfig(**{**cfg.__dict__,
+                        "tau_jump_cap": cfg.tau_jump_cap * ROLLOUT_RELAX,
+                        "tau_dt_max": cfg.tau_dt_max * ROLLOUT_RELAX})
+
+
 def main():
     t0 = time.time()
     ecfg = EventConfig.load(E02 / "event_config.json")
@@ -81,15 +92,16 @@ def main():
             ep = Episode.load(E02 / m["path"])
             t_dec = decision_times(ep, ecfg)[::DEC_STRIDE]
             states = episode_states(ep, t_dec)
+            mc_cfg = relaxed(ep.sim_config)
             for s_i, (q, mod) in enumerate(states):
                 seed = SEED_BASE + 1000 * m["sim_seed"] + s_i
-                p, se = ensemble_outcome_probs(ep.sim_config, None, mod,
+                p, se = ensemble_outcome_probs(mc_cfg, None, mod,
                                                ecfg, N_REPS, seed,
                                                q_exact=q)
                 ps.append(p)
                 ses.append(se)
                 floors.append(np.minimum(p, 1.0 - p))
-            if (r_i + 1) % 8 == 0:
+            if (r_i + 1) % 4 == 0:
                 print(f"  [{level}] {r_i + 1}/{len(rows)} episodes", flush=True)
         floors = np.array(floors)
         ses = np.array(ses)
@@ -101,8 +113,9 @@ def main():
         out[f"{level}_floors"] = floors
         out[f"{level}_p"] = np.array(ps)
         print(f"  [{level}] gamma(h): " + " ".join(
-            f"{h:g}:{g:.3f}" for h, g in zip(ecfg.lead_times, gamma)))
-    np.savez_compressed(DATA_DIR / "genie.npz", **out)
+            f"{h:g}:{g:.3f}" for h, g in zip(ecfg.lead_times, gamma)),
+            flush=True)
+        np.savez_compressed(DATA_DIR / "genie.npz", **out)  # incremental
     print(f"genie floor done in {time.time() - t0:.1f}s")
 
 
