@@ -145,3 +145,29 @@ T1 is about.
 **Sweep engine.** tau-leap everywhere in the sweep (Gillespie at N=1000,
 B=200 would be ~4·10^7 events × O(N) Python work per event); the engines are
 cross-validated distributionally in tests/test_sim.py on a small config.
+
+---
+
+## 2026-08-02 — tau-leap within-step ordering (B5 follow-up)
+
+**Randomized service/arrival ordering within a tau-leap step.** The first
+implementation applied services before arrivals in every step. e01's density
+figure showed a systematic ~10% mass deficit at the lattice site Q=0 (and a
+matching distortion at the Q=B wall) relative to both Gillespie and the PDE —
+a coherent artifact that put a flat ~1%·ĉ0 plateau in the cosine spectra and
+wrecked the moderate-load decay fit. Root cause: with a fixed order, the
+within-step path (arrival, service) from Q=0 — which ends at 0 — is always
+realized as "end at 1"; an O(uτ·dτ) boundary bias with a definite sign that
+does not shrink with the jump cap once τ hits tau_dt_max. Fix: each partition
+applies its two Poisson counts in a uniformly random order per step, which
+cancels the leading-order ordering bias at both walls (verified against
+Gillespie on a small moderate-load config: site-0 mass 0.0798 vs 0.0808,
+previously 0.0727). Rejected: shrinking the jump cap (does not address the
+ordering asymmetry and costs 5–20× runtime); Strang-style split steps
+(equivalent effect, more code).
+
+The engine cross-validation test was also retightened around this work: its
+absolute W1 threshold sat below the measured within-engine seed noise of the
+small config (time-correlated samples), so it could fail on noise alone; the
+sharp criterion is now cross-engine distance ≲ within-engine seed noise, with
+a loose absolute backstop.

@@ -21,7 +21,7 @@ def _w1(res_a, res_b, t_from):
 
 
 SMALL = dict(
-    n_partitions=80, buffer_depth=16, t_end=12.0, dt_sample=0.5,
+    n_partitions=80, buffer_depth=16, t_end=24.0, dt_sample=0.5,
     mode="diffusive", a=0.06, lam=0.35, mu0=0.5, n_brokers=2,
 )
 
@@ -29,8 +29,11 @@ SMALL = dict(
 def test_gillespie_and_tau_leap_agree():
     """Distributional agreement of the two engines on a small configuration.
 
-    Time-averaged stationary-window lag measures must be within a Wasserstein
-    distance consistent with sampling noise (~1/sqrt(N * n_samples) scale).
+    The cross-engine Wasserstein distance between time-averaged
+    stationary-window lag measures must be comparable to the within-engine
+    seed-to-seed noise (samples are time-correlated, so the noise scale is
+    well above 1/sqrt(N * n_samples); the relative criterion is the sharp
+    one, the absolute bound a backstop).
     """
     d_cross = []
     d_within = []
@@ -38,11 +41,10 @@ def test_gillespie_and_tau_leap_agree():
         g = simulate(SimConfig(method="gillespie", seed=seed, **SMALL))
         t = simulate(SimConfig(method="tau_leap", seed=seed + 100, **SMALL))
         t2 = simulate(SimConfig(method="tau_leap", seed=seed + 200, **SMALL))
-        d_cross.append(_w1(g, t, t_from=6.0))
-        d_within.append(_w1(t, t2, t_from=6.0))
-    # cross-engine discrepancy must be comparable to seed-to-seed noise
-    assert np.mean(d_cross) < 0.02, (d_cross, d_within)
-    assert np.mean(d_cross) < 3.0 * max(np.mean(d_within), 1e-3)
+        d_cross.append(_w1(g, t, t_from=8.0))
+        d_within.append(_w1(t, t2, t_from=8.0))
+    assert np.mean(d_cross) < 0.035, (d_cross, d_within)
+    assert np.mean(d_cross) < 2.5 * max(np.mean(d_within), 5e-3), (d_cross, d_within)
 
 
 def test_rejections_counted_at_saturation():

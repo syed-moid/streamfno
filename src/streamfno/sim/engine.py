@@ -18,9 +18,14 @@ Tau-leaping approximations (documented in docs/decisions.md):
   (explicit tau-leap); the step is capped so the expected number of jumps
   per partition per step is <= tau_jump_cap and the step never exceeds
   tau_dt_max, keeping the mean-field coupling well resolved.
-- Within a step, services are applied before arrivals; boundary counts are
-  computed after both (excess over B is counted as rejected).  The
-  resulting boundary bias is O(tau).
+- Within a step, each partition applies its service and arrival counts in a
+  uniformly random order (services-first or arrivals-first).  A fixed order
+  has an O(u tau * d tau) boundary bias with a definite sign -- e.g.
+  services-first at Q = 0 turns the path (arrival, service) -> 0 into
+  "always end at 1", measurably depleting the wall site (~10% at the
+  stationary boundary layer) -- and the randomized order cancels it at
+  leading order at both walls.  Down-jumps in excess of the backlog are
+  no-ops (reflection); up-jumps in excess of B are counted as rejected.
 """
 
 from __future__ import annotations
@@ -165,10 +170,16 @@ def _simulate_tau_leap(cfg: SimConfig) -> SimResult:
 
         arrivals = rng.poisson(u * tau)
         services = rng.poisson(d * tau)
-        q1 = np.maximum(q - services, 0)
-        q2 = q1 + arrivals
-        over = np.maximum(q2 - B, 0)
-        q = np.minimum(q2, B)
+        services_first = rng.random(cfg.n_partitions) < 0.5
+        # services-first branch
+        q_sf = np.maximum(q - services, 0) + arrivals
+        over_sf = np.maximum(q_sf - B, 0)
+        # arrivals-first branch
+        q_plus = q + arrivals
+        over_af = np.maximum(q_plus - B, 0)
+        q_af = np.maximum(np.minimum(q_plus, B) - services, 0)
+        over = np.where(services_first, over_sf, over_af)
+        q = np.where(services_first, np.minimum(q_sf, B), q_af)
         rej_interval += np.bincount(classes, weights=over, minlength=cfg.n_brokers).astype(
             np.int64
         )
