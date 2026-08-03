@@ -79,7 +79,16 @@ def main():
     ecfg = EventConfig.load(E02 / "event_config.json")
     manifest = json.loads((E02 / "manifest.json").read_text())
     out = {"lead_times": np.array(ecfg.lead_times)}
+    # resume: keep levels already computed in a previous (partial) run
+    prior = DATA_DIR / "genie.npz"
+    if prior.exists():
+        with np.load(prior) as f:
+            for k in f.files:
+                out[k] = f[k]
     for level in LEVELS:
+        if f"{level}_gamma" in out:
+            print(f"  [{level}] already computed; skipping", flush=True)
+            continue
         rows = [m for m in manifest
                 if m["level"] == level and m["split"] == "test"]
         floors, ps, ses, ep_ids = [], [], [], []
