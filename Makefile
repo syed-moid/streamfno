@@ -1,4 +1,4 @@
-.PHONY: setup test lint e00 e01 figures
+.PHONY: setup test lint e00 e01 e02 figures
 
 setup:
 	uv venv
@@ -19,6 +19,9 @@ e00:
 e01:
 	uv run python experiments/e01_spectral_decay/run.py
 	uv run python experiments/e01_spectral_decay/figures.py
+
+e02:
+	uv run python experiments/e02_dataset/run.py
 
 figures:
 	uv run python experiments/e00_t1_convergence/figures.py
