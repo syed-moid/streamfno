@@ -1,4 +1,4 @@
-.PHONY: setup test lint e00 e01 e02 e03 e04 e05 figures
+.PHONY: setup test lint e00 e01 e02 e03 e04 e05 e06 e07 e08 figures
 
 setup:
 	uv venv
@@ -34,6 +34,19 @@ e04:
 
 e05:
 	uv run python experiments/e05_headline/run.py
+
+# e06-e08 need the local Kafka lab running: bash infra/kafka-local.sh start
+e06:
+	uv run python experiments/e06_real_spectral/run.py
+	uv run python experiments/e06_real_spectral/analyze.py
+
+e07:
+	uv run python experiments/e07_identifiability/run.py
+	uv run python experiments/e07_identifiability/analyze.py
+
+e08:
+	uv run python experiments/e08_actuation/run.py
+	uv run python experiments/e08_actuation/analyze.py
 
 figures:
 	uv run python experiments/e00_t1_convergence/figures.py
