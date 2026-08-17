@@ -46,6 +46,11 @@ OUT_DIR = ROOT / "data" / "e07"
 T_WARMUP = 40.0           # normalized units dropped from estimation
 N_BINS_EST = 25
 STRIDE = 4                # Delta = 1 normalized unit at 0.25 cadence
+# drift uses one-tick increments: measurement noise is zero-mean in the
+# conditional mean (only the variance inherits its bias), and a long
+# window is *censored* -- during a 0.3/unit drain a 1-unit window starting
+# below x ~ 0.3 hits the empty wall inside the window, shrinking |b_hat|
+DRIFT_STRIDE = 1
 # interior bins only: the wall bin at x = 0 censors the drift (an empty
 # queue shows b ~ 0 whatever the netput), so anchors and coefficient
 # interpolation start above the first bin
@@ -88,10 +93,21 @@ def estimate(run_dir: Path) -> dict:
     is_high, centers = classify_two_state(rate, smooth=SMOOTH_TICKS)
     dt = params.dt_poll_norm
 
+    def eroded(mask: np.ndarray) -> np.ndarray:
+        """Drop one tick on each side of a state transition (classifier
+        labels lag the modulator by ~1 tick)."""
+        out = mask.copy()
+        out[1:] &= mask[:-1]
+        out[:-1] &= mask[1:]
+        return out
+
     fits = {}
     for state, mask in (("low", ~is_high), ("high", is_high)):
         fits[state] = {STRIDE: binned_increments(
             x, dt, stride=STRIDE, n_bins=N_BINS_EST, start_mask=mask)}
+        fits[state][DRIFT_STRIDE] = binned_increments(
+            x, dt, stride=DRIFT_STRIDE, n_bins=N_BINS_EST,
+            start_mask=eroded(mask))
         try:
             fits[state][2 * STRIDE] = binned_increments(
                 x, dt, stride=2 * STRIDE, n_bins=N_BINS_EST, start_mask=mask)
@@ -104,8 +120,9 @@ def estimate(run_dir: Path) -> dict:
     for state in ("low", "high"):
         f1 = fits[state][STRIDE]
         f2 = fits[state][2 * STRIDE]
+        fd = fits[state][DRIFT_STRIDE]
         try:
-            b_hat, b_se = interior_mean_drift(f1, *ANCHOR_RANGE)
+            b_hat, b_se = interior_mean_drift(fd, *ANCHOR_RANGE)
         except ValueError:
             b_hat, b_se = None, None  # no interior mass in this state
         lam_cfg = params.lam_high if state == "high" else params.lam_low
@@ -127,12 +144,13 @@ def estimate(run_dir: Path) -> dict:
             "b_rel_error": (abs(b_hat - b_cfg) / abs(b_cfg)
                             if b_hat is not None else None),
             "a_hat_d1": a1, "a_hat_d2": a2, "a_noise_corrected": a_corr,
-            "x_centers": f1.x_centers.tolist(),
-            "b_hat_bins": np.where(np.isfinite(f1.b_hat),
-                                   f1.b_hat, np.nan).tolist(),
+            "x_centers": fd.x_centers.tolist(),
+            "b_hat_bins": np.where(np.isfinite(fd.b_hat),
+                                   fd.b_hat, np.nan).tolist(),
             "a_hat_bins": np.where(np.isfinite(f1.a_hat),
                                    f1.a_hat, np.nan).tolist(),
-            "counts": f1.counts.tolist(),
+            "counts": fd.counts.tolist(),
+            "a_counts": f1.counts.tolist(),
         }
     return out
 

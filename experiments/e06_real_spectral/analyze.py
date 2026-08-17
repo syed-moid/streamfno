@@ -31,6 +31,13 @@ E01_RESULTS = Path(__file__).resolve().parents[2] / "data" / "e01" / "results.np
 T_WARMUP = 40.0     # normalized units discarded
 N_BINS = 64
 K_FIT = (3, 16)
+# the real density carries an empty-queue atom (partitions idle most of
+# the time at these netput shapes); its flat spectral contribution
+# dominates every k, so alongside the protocol-faithful full-density fit
+# we fit the *busy-conditional* density -- X | X >= X_BUSY, affinely
+# rescaled to [0, 1] -- which measures the burst-excursion component's
+# interior smoothness (the quantity the T4 smoothing argument concerns)
+X_BUSY = 0.03
 LEVELS = ("light", "moderate", "heavy")
 # e01's sustained-intensity levels, paired for the table in load order
 E01_LEVEL_OF = {"light": "light", "moderate": "moderate",
@@ -67,9 +74,20 @@ def level_spectra(level: str) -> dict:
                               / np.maximum(floor_cos[k_lo:k_hi + 1], 1e-300)))
     snr_fft = float(np.median(c_fft[k_lo:k_hi + 1]
                               / np.maximum(floor_fft[k_lo:k_hi + 1], 1e-300)))
+
+    # busy-conditional density on the rescaled coordinate
+    xf = x.ravel()
+    busy = xf[xf >= X_BUSY]
+    u = (busy - X_BUSY) / (1.0 - X_BUSY)
+    rho_busy = density(u)
+    fb_cos = fit_decay(cosine_coefficients(rho_busy), *K_FIT)
+    fb_fft = fit_decay(fft_coefficients(rho_busy), *K_FIT)
+
     return dict(rho=rho, c_cos=c_cos, c_fft=c_fft,
                 floor_cos=floor_cos, floor_fft=floor_fft,
                 f_cos=f_cos, f_fft=f_fft, snr_cos=snr_cos, snr_fft=snr_fft,
+                rho_busy=rho_busy, fb_cos=fb_cos, fb_fft=fb_fft,
+                busy_fraction=float(busy.size / xf.size),
                 mean_x=float(x.mean()), n_samples=int(x.size))
 
 
@@ -79,19 +97,27 @@ def main() -> None:
     print(f"{'level':<10} {'s_cos':>22} {'s_fft':>22} {'SNR cos':>8}")
     for level in LEVELS:
         r = level_spectra(level)
-        for tag in ("rho", "c_cos", "c_fft", "floor_cos", "floor_fft"):
+        for tag in ("rho", "c_cos", "c_fft", "floor_cos", "floor_fft",
+                    "rho_busy"):
             out_arrays[f"{tag}_{level}"] = r[tag]
         for tag in ("cos", "fft"):
             f = r[f"f_{tag}"]
             fits[f"{level}_real_{tag}"] = [f.s, f.s_lo, f.s_hi]
+            fb = r[f"fb_{tag}"]
+            fits[f"{level}_busy_{tag}"] = [fb.s, fb.s_lo, fb.s_hi]
         fits[f"{level}_meta"] = {"snr_cos": r["snr_cos"],
                                  "snr_fft": r["snr_fft"],
                                  "mean_x": r["mean_x"],
+                                 "busy_fraction": r["busy_fraction"],
                                  "n_samples": r["n_samples"]}
         fc, ff = r["f_cos"], r["f_fft"]
         print(f"{level:<10} {fc.s:6.2f} [{fc.s_lo:5.2f},{fc.s_hi:5.2f}]"
               f"    {ff.s:6.2f} [{ff.s_lo:5.2f},{ff.s_hi:5.2f}]"
               f"  {r['snr_cos']:8.1f}")
+        bc, bf = r["fb_cos"], r["fb_fft"]
+        print(f"  busy     {bc.s:6.2f} [{bc.s_lo:5.2f},{bc.s_hi:5.2f}]"
+              f"    {bf.s:6.2f} [{bf.s_lo:5.2f},{bf.s_hi:5.2f}]"
+              f"  (busy frac {r['busy_fraction']:.3f})")
 
     # sim-side numbers for the table
     table = {}
