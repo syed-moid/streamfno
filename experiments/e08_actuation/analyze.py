@@ -41,7 +41,9 @@ def actuation_delays() -> dict:
     rows = []
     for c in meta["cycles"]:
         t_cmd = c["t_scale_up_cmd"]
-        t_next = t_cmd + meta["up_hold_s"] + 5.0
+        # window ends at the scale-down command: its own rebalance would
+        # otherwise be counted as late completion of the scale-up
+        t_next = c["t_scale_down_cmd"] - 0.5
         # (i) rebalance completion: last assign event in the window
         assigns = [e for e in events
                    if e["event"] == "assign" and t_cmd <= e["t_wall"] < t_next]
