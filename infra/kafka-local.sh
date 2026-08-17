@@ -65,7 +65,8 @@ detect_platform() {
 find_java() {
   # Prefer a lab-local JDK, then the system java if it's modern enough.
   local lab_jdk
-  lab_jdk=$(find "$LAB_DIR" -maxdepth 3 -name java -path '*/bin/java' 2>/dev/null | head -1 || true)
+  # depth 6: macOS Temurin tarballs nest as jdk/<release>/Contents/Home/bin/java
+  lab_jdk=$(find "$LAB_DIR" -maxdepth 6 -name java -path '*/bin/java' 2>/dev/null | head -1 || true)
   if [[ -n "$lab_jdk" ]]; then echo "$lab_jdk"; return; fi
   if command -v java >/dev/null 2>&1; then
     local ver
