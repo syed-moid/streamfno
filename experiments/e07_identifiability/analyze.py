@@ -160,8 +160,12 @@ def drift_and_diffusion(est: dict, state: str):
     rec = est[state]
     xc = np.asarray(rec["x_centers"])
     bb = np.asarray(rec["b_hat_bins"], dtype=float)
+    # interior bins only, both ends: the wall at 0 censors drains and the
+    # clip at 1 censors builds (increments crossing the budget truncate),
+    # so np.interp's constant extension carries the last interior value to
+    # the walls
     ok = (np.isfinite(bb) & (np.asarray(rec["counts"]) > 50)
-          & (xc >= ANCHOR_RANGE[0]))
+          & (xc >= ANCHOR_RANGE[0]) & (xc <= ANCHOR_RANGE[1]))
     xb, bv = xc[ok], bb[ok]
     if xb.size == 0:
         raise ValueError(f"no usable interior drift bins for state {state!r}")
@@ -240,11 +244,10 @@ def forecast_eval(est: dict, eps: float) -> dict:
             emp = x[s + k]
             wa = np.full(emp.size, 1.0 / emp.size)
             ridx = int(np.argmin(np.abs(fp.times - k * dt)))
-            rho_k = fp.rho[ridx, 0]
-            w1_pred.append(w1_weights(emp, wa, centers, rho_k * h
-                                      / (rho_k.sum() * h)))
-            w1_pers.append(w1_weights(emp, wa, centers, rho0 * h
-                                      / (rho0.sum() * h)))
+            rho_k = np.maximum(fp.rho[ridx, 0], 0.0)  # implicit-Euler roundoff
+            rho_p = np.maximum(rho0, 0.0)
+            w1_pred.append(w1_weights(emp, wa, centers, rho_k / rho_k.sum()))
+            w1_pers.append(w1_weights(emp, wa, centers, rho_p / rho_p.sum()))
         # onset: same trailing smoothing applied to both flux series
         pred_flux = fp.regulator_rate[:, 0]
         pred_bar = smoothed_flux(fp.times, pred_flux, FLUX_WINDOW)
