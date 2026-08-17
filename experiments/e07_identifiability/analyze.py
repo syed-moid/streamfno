@@ -209,8 +209,8 @@ def calibrate_eps(cal_dir: Path) -> float:
     return max(float(eps), floor)
 
 
-def forecast_eval(est: dict, eps: float) -> dict:
-    params, tel, t_norm, keep, _ = load_run(EVAL_DIR)
+def forecast_eval(est: dict, eps: float, run_dir: Path | None = None) -> dict:
+    params, tel, t_norm, keep, _ = load_run(run_dir or EVAL_DIR)
     dt = params.dt_poll_norm
     x = tel.x(params.budget_b)[keep]
     t = t_norm[keep]
