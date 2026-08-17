@@ -46,8 +46,12 @@ OUT_DIR = ROOT / "data" / "e07"
 T_WARMUP = 40.0           # normalized units dropped from estimation
 N_BINS_EST = 25
 STRIDE = 4                # Delta = 1 normalized unit at 0.25 cadence
-ANCHOR_RANGE = (0.02, 0.70)
-SMOOTH_TICKS = 8          # 2 units, arrival-state classifier
+# interior bins only: the wall bin at x = 0 censors the drift (an empty
+# queue shows b ~ 0 whatever the netput), so anchors and coefficient
+# interpolation start above the first bin
+ANCHOR_RANGE = (0.06, 0.70)
+SMOOTH_TICKS = 2          # arrival-state classifier; rate SNR is large and
+                          # longer trailing windows delay labels into drains
 MIN_BURST_UNITS = 3.0     # forecast bursts at least this long
 MAX_HORIZON = 16.0
 FLUX_WINDOW = 2.0
@@ -86,11 +90,13 @@ def estimate(run_dir: Path) -> dict:
 
     fits = {}
     for state, mask in (("low", ~is_high), ("high", is_high)):
-        fits[state] = {
-            s: binned_increments(x, dt, stride=s, n_bins=N_BINS_EST,
-                                 start_mask=mask)
-            for s in (STRIDE, 2 * STRIDE)
-        }
+        fits[state] = {STRIDE: binned_increments(
+            x, dt, stride=STRIDE, n_bins=N_BINS_EST, start_mask=mask)}
+        try:
+            fits[state][2 * STRIDE] = binned_increments(
+                x, dt, stride=2 * STRIDE, n_bins=N_BINS_EST, start_mask=mask)
+        except ValueError:
+            fits[state][2 * STRIDE] = None  # no long state-pure windows
 
     out = {"params": json.loads(params.to_json()),
            "arrival_centers_norm": centers.tolist(),
@@ -98,17 +104,28 @@ def estimate(run_dir: Path) -> dict:
     for state in ("low", "high"):
         f1 = fits[state][STRIDE]
         f2 = fits[state][2 * STRIDE]
-        b_hat, b_se = interior_mean_drift(f1, *ANCHOR_RANGE)
+        try:
+            b_hat, b_se = interior_mean_drift(f1, *ANCHOR_RANGE)
+        except ValueError:
+            b_hat, b_se = None, None  # no interior mass in this state
         lam_cfg = params.lam_high if state == "high" else params.lam_low
         b_cfg = lam_cfg - params.mu0
-        good = np.isfinite(f1.a_hat) & (f1.counts > 50)
-        a1 = float(np.average(f1.a_hat[good], weights=f1.counts[good]))
-        good2 = np.isfinite(f2.a_hat) & (f2.counts > 50)
-        a2 = float(np.average(f2.a_hat[good2], weights=f2.counts[good2]))
-        a_corr = 2.0 * a2 - a1
+        interior = ((f1.x_centers >= ANCHOR_RANGE[0])
+                    & (f1.x_centers <= ANCHOR_RANGE[1]))
+        good = np.isfinite(f1.a_hat) & (f1.counts > 50) & interior
+        a1 = (float(np.average(f1.a_hat[good], weights=f1.counts[good]))
+              if good.any() else None)
+        a2, a_corr = None, None
+        if f2 is not None and a1 is not None:
+            good2 = np.isfinite(f2.a_hat) & (f2.counts > 50) & interior
+            if good2.any():
+                a2 = float(np.average(f2.a_hat[good2],
+                                      weights=f2.counts[good2]))
+                a_corr = 2.0 * a2 - a1
         out[state] = {
             "b_hat": b_hat, "b_se": b_se, "b_configured": b_cfg,
-            "b_rel_error": abs(b_hat - b_cfg) / abs(b_cfg),
+            "b_rel_error": (abs(b_hat - b_cfg) / abs(b_cfg)
+                            if b_hat is not None else None),
             "a_hat_d1": a1, "a_hat_d2": a2, "a_noise_corrected": a_corr,
             "x_centers": f1.x_centers.tolist(),
             "b_hat_bins": np.where(np.isfinite(f1.b_hat),
@@ -125,11 +142,16 @@ def drift_and_diffusion(est: dict, state: str):
     rec = est[state]
     xc = np.asarray(rec["x_centers"])
     bb = np.asarray(rec["b_hat_bins"], dtype=float)
-    ok = np.isfinite(bb) & (np.asarray(rec["counts"]) > 50)
+    ok = (np.isfinite(bb) & (np.asarray(rec["counts"]) > 50)
+          & (xc >= ANCHOR_RANGE[0]))
     xb, bv = xc[ok], bb[ok]
+    if xb.size == 0:
+        raise ValueError(f"no usable interior drift bins for state {state!r}")
     a_val = rec["a_noise_corrected"]
-    if a_val <= 0:
-        a_val = rec["a_hat_d2"]
+    if a_val is None or a_val <= 0:
+        a_val = rec["a_hat_d2"] if rec["a_hat_d2"] is not None else rec["a_hat_d1"]
+    if a_val is None:
+        raise ValueError(f"no usable variance-rate bins for state {state!r}")
 
     def b(x, m):
         return np.interp(np.asarray(x, dtype=float), xb, bv)
@@ -155,7 +177,14 @@ def calibrate_eps(cal_dir: Path) -> float:
                         lead_times=(H_MID,), t_warmup=T_WARMUP,
                         dt_decision=4.0)
     eps, record = calibrate_threshold([ep], proto, H_MID, TARGET_RATE)
-    return float(eps)
+    # floor at the collector's flux resolution (one message over budget in
+    # one tick); an overshoot-poor calibration run would otherwise give
+    # eps = 0 and trivial onsets
+    params_ = RunParams.from_json(json.dumps(
+        json.loads((cal_dir / "manifest.json").read_text())["params"]))
+    floor = 1.0 / (params_.n_partitions * params_.budget_b
+                   * params_.dt_poll_norm)
+    return max(float(eps), floor)
 
 
 def forecast_eval(est: dict, eps: float) -> dict:
@@ -180,7 +209,10 @@ def forecast_eval(est: dict, eps: float) -> dict:
         if t[s] < T_WARMUP:
             continue
         horizon = min((e - s) * dt, MAX_HORIZON)
-        n_ticks = int(round(horizon / dt))
+        n_ticks = min(int(round(horizon / dt)), x.shape[0] - 1 - s)
+        if n_ticks < 1:
+            continue
+        horizon = n_ticks * dt
         pool = x[max(0, s - RHO0_TICKS + 1):s + 1].ravel()
         rho0 = np.histogram(pool, bins=edges)[0] / pool.size / h
         fp = solve_fp(rho0, b_fn, a_val, t_end=horizon, dt=2e-3,
@@ -219,11 +251,17 @@ def main() -> None:
     est = estimate(CAL_DIR)
     for state in ("low", "high"):
         r = est[state]
-        print(f"  {state:<5} b_hat = {r['b_hat']:+.4f} +/- {r['b_se']:.4f}  "
-              f"configured = {r['b_configured']:+.4f}  "
-              f"rel err = {r['b_rel_error']:.3f}")
-        print(f"        a: d1 = {r['a_hat_d1']:.5f}  d2 = {r['a_hat_d2']:.5f}"
-              f"  noise-corrected = {r['a_noise_corrected']:.5f}")
+        if r["b_hat"] is None:
+            print(f"  {state:<5} b_hat: no interior mass "
+                  f"(configured {r['b_configured']:+.4f})")
+        else:
+            print(f"  {state:<5} b_hat = {r['b_hat']:+.4f} +/- {r['b_se']:.4f}  "
+                  f"configured = {r['b_configured']:+.4f}  "
+                  f"rel err = {r['b_rel_error']:.3f}")
+        def fmt(v):
+            return "none" if v is None else f"{v:.5f}"
+        print(f"        a: d1 = {fmt(r['a_hat_d1'])}  d2 = {fmt(r['a_hat_d2'])}"
+              f"  noise-corrected = {fmt(r['a_noise_corrected'])}")
     (OUT_DIR / "identifiability.json").write_text(json.dumps(est, indent=1))
 
     print("calibrating flux threshold on the calibration run...")

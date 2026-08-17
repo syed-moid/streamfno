@@ -59,11 +59,19 @@ def binned_increments(x: np.ndarray, dt: float, stride: int = 4,
     """
     x = np.asarray(x, dtype=float)
     k_tot = x.shape[0]
-    starts = np.arange(0, k_tot - stride, stride)
-    if start_mask is not None:
-        ok = np.array([bool(start_mask[s:s + stride + 1].all())
-                       for s in starts])
-        starts = starts[ok]
+    # greedy non-overlapping windows: advance one sample at a time until a
+    # (state-pure, if masked) window fits, then jump past it -- windows are
+    # not forced onto a global stride grid, which would discard most short
+    # same-state segments
+    starts_list = []
+    s = 0
+    while s < k_tot - stride:
+        if start_mask is None or bool(start_mask[s:s + stride + 1].all()):
+            starts_list.append(s)
+            s += stride
+        else:
+            s += 1
+    starts = np.asarray(starts_list, dtype=int)
     if starts.size == 0:
         raise ValueError("no usable increment windows")
     x0 = x[starts].ravel()
