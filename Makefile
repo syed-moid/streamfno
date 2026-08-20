@@ -1,4 +1,4 @@
-.PHONY: setup test lint e00 e01 e02 e03 e04 e05 e06 e07 e08 figures
+.PHONY: setup test lint e00 e01 e02 e03 e04 e05 e06 e07 e08 e09 e10 figures
 
 setup:
 	uv venv
@@ -50,6 +50,16 @@ e08:
 	uv run python experiments/e08_actuation/run.py
 	uv run python experiments/e08_actuation/analyze.py
 
+# e09/e10 run on saved e06/e07 telemetry and artifacts -- no cluster needed
+e09:
+	uv run python experiments/e09_compute_profile/run.py
+	uv run python experiments/e09_compute_profile/analyze.py
+
+e10:
+	uv run python experiments/e10_surrogate/run.py
+	uv run python experiments/e10_surrogate/analyze.py
+	uv run python experiments/e10_surrogate/figures.py
+
 figures:
 	uv run python experiments/e00_t1_convergence/figures.py
 	uv run python experiments/e01_spectral_decay/figures.py
@@ -58,3 +68,4 @@ figures:
 	uv run python experiments/e05_headline/run.py
 	uv run python experiments/e06_real_spectral/figures.py
 	uv run python experiments/e07_identifiability/figures.py
+	uv run python experiments/e10_surrogate/figures.py
