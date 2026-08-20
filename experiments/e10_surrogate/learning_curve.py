@@ -81,15 +81,19 @@ def lib_view(lib: dict, train_size: int) -> dict:
 def main() -> None:
     lib = extended_library()
     sweep_model = DATA_DIR / f"model_K{K_BEST}.pt"
-    sweep_bytes = sweep_model.read_bytes()  # restored verbatim afterwards
+    sweep_bytes = (sweep_model.read_bytes() if sweep_model.exists()
+                   else None)  # restored verbatim afterwards
     curve = {}
     for size in TRAIN_SIZES:
         view = lib_view(lib, size)
-        print(f"training K={K_BEST} on {size} trajectories...")
-        rec = e10_run.train_one(K_BEST, view)
-        src = DATA_DIR / f"model_K{K_BEST}.pt"
         dst = DATA_DIR / f"model_K{K_BEST}_n{size}.pt"
-        src.replace(dst)  # train_one saves under the sweep name
+        if dst.exists():
+            print(f"K={K_BEST} n={size}: resuming from saved model")
+            rec = None
+        else:
+            print(f"training K={K_BEST} on {size} trajectories...")
+            rec = e10_run.train_one(K_BEST, view)
+            (DATA_DIR / f"model_K{K_BEST}.pt").replace(dst)
         model = e10_run.DCTOperator(K_BEST)
         model.load_state_dict(torch.load(dst, weights_only=True))
         model.eval()
@@ -97,12 +101,20 @@ def main() -> None:
         curve[str(size)] = {
             "w1_h8": acc[K_BEST]["w1_mean"][H_KEY],
             "flux_err_h8": acc[K_BEST]["flux_err_mean"][H_KEY],
-            "train_wall_s": rec["train_wall_s"],
-            "train_cpu_s": rec["train_cpu_s"],
-            "final_val_mse": rec["val_mse_curve"][-1],
+            "train_wall_s": rec["train_wall_s"] if rec else None,
+            "train_cpu_s": rec["train_cpu_s"] if rec else None,
+            "final_val_mse": rec["val_mse_curve"][-1] if rec else None,
+            "resumed": rec is None,
         }
         print(f"  n={size}: test W1@h8 {curve[str(size)]['w1_h8']:.5f}")
-    sweep_model.write_bytes(sweep_bytes)  # put the K-sweep model back
+    if sweep_bytes is not None:
+        sweep_model.write_bytes(sweep_bytes)  # put the K-sweep model back
+    elif not sweep_model.exists():
+        # sweep model lost to an interrupted earlier invocation: retrain
+        # it on the original library (same seed and procedure as the sweep)
+        print(f"retraining the K={K_BEST} sweep model (original library)...")
+        with np.load(DATA_DIR / "trajectories.npz") as f:
+            e10_run.train_one(K_BEST, {k: f[k] for k in f.files})
     (DATA_DIR / "learning_curve.json").write_text(json.dumps({
         "k_modes": K_BEST, "train_sizes": list(TRAIN_SIZES),
         "n_traj_xl": N_TRAJ_XL, "curve": curve}, indent=1))
