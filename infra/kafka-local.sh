@@ -155,6 +155,9 @@ transaction.state.log.min.isr=$(( rf > 1 ? rf - 1 : 1 ))
 # --- telemetry-friendly settings for the StreamFNO lab ---
 # fine-grained metrics recording; scrape via JMX on port $(( kp + 1 ))
 metrics.recording.level=DEBUG
+# fast retention enforcement so minutes-scale retention.ms (e11) expires
+# on schedule instead of at the 5-minute default check cadence
+log.retention.check.interval.ms=10000
 EOF
   done
   msg "configs written to $CONF_DIR"

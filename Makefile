@@ -1,4 +1,4 @@
-.PHONY: setup test lint e00 e01 e02 e03 e04 e05 e06 e07 e08 e09 e10 e12 figures
+.PHONY: setup test lint e00 e01 e02 e03 e04 e05 e06 e07 e08 e09 e10 e11 e12 figures
 
 setup:
 	uv venv
@@ -59,6 +59,13 @@ e10:
 	uv run python experiments/e10_surrogate/run.py
 	uv run python experiments/e10_surrogate/analyze.py
 	uv run python experiments/e10_surrogate/figures.py
+
+# e11 needs the local Kafka lab running: bash infra/kafka-local.sh start
+# (restarted at least once after the retention-check-interval setting)
+e11:
+	uv run python experiments/e11_retention/run.py
+	uv run python experiments/e11_retention/analyze.py
+	uv run python experiments/e11_retention/figures.py
 
 # solver validation: refinement orders + independent MC reference
 e12:

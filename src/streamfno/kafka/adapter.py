@@ -49,6 +49,8 @@ class LagTelemetry:
     sample_latency_s: np.ndarray
     cpu_s: np.ndarray
     meta: dict
+    earliest: np.ndarray | None = None   # (K, P) log-start offsets
+                                         # (None for pre-e11 files)
 
     @property
     def lag(self) -> np.ndarray:
@@ -67,6 +69,7 @@ def load_telemetry(path: str | Path) -> LagTelemetry:
             t_wall=f["t_wall"], leo=f["leo"], committed=f["committed"],
             sample_latency_s=f["sample_latency_s"], cpu_s=f["cpu_s"],
             meta=json.loads(str(f["meta_json"])),
+            earliest=f["earliest"] if "earliest" in f.files else None,
         )
 
 

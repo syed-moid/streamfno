@@ -11,7 +11,9 @@ round trip, so the collector's cost and any perturbation it causes are
 measurable rather than assumed.
 
 Output: an .npz with t_wall (K,), leo (K, P), committed (K, P; -1 before
-the first commit), sample_latency_s (K,), cpu_s (K,), meta_json.
+the first commit), earliest (K, P; log-start offsets -- their advance
+past ``committed`` is the ground-truth recoverability-loss event for the
+retention boundary), sample_latency_s (K,), cpu_s (K,), meta_json.
 Checkpoints atomically every 60 s so a killed run keeps its telemetry.
 
 Usage: python -m streamfno.kafka.collector --params params.json \
@@ -48,6 +50,7 @@ def run_collector(params: RunParams, out_path: str, duration_s: float) -> None:
     tps = [TopicPartition(params.topic, p) for p in range(params.n_partitions)]
 
     rows_t, rows_leo, rows_com, rows_lat, rows_cpu = [], [], [], [], []
+    rows_earliest = []
     stop = {"flag": False}
     signal.signal(signal.SIGTERM, lambda *_: stop.update(flag=True))
     signal.signal(signal.SIGINT, lambda *_: stop.update(flag=True))
@@ -59,6 +62,7 @@ def run_collector(params: RunParams, out_path: str, duration_s: float) -> None:
             t_wall=np.asarray(rows_t),
             leo=np.asarray(rows_leo, dtype=np.int64),
             committed=np.asarray(rows_com, dtype=np.int64),
+            earliest=np.asarray(rows_earliest, dtype=np.int64),
             sample_latency_s=np.asarray(rows_lat),
             cpu_s=np.asarray(rows_cpu),
             meta_json=np.array(json.dumps({
@@ -69,8 +73,8 @@ def run_collector(params: RunParams, out_path: str, duration_s: float) -> None:
         )
         os.replace(tmp, out_path)
 
-    def sample_leo() -> np.ndarray:
-        futs = admin.list_offsets({tp: OffsetSpec.latest() for tp in tps})
+    def sample_offsets(spec) -> np.ndarray:
+        futs = admin.list_offsets({tp: spec for tp in tps})
         out = np.full(params.n_partitions, -1, dtype=np.int64)
         for tp, fut in futs.items():
             out[tp.partition] = fut.result().offset
@@ -97,12 +101,14 @@ def run_collector(params: RunParams, out_path: str, duration_s: float) -> None:
             continue
         next_tick += params.dt_poll_s
         tick = time.time()
-        leo = sample_leo()
+        leo = sample_offsets(OffsetSpec.latest())
         com = sample_committed()
+        early = sample_offsets(OffsetSpec.earliest())
         rows_lat.append(time.time() - tick)
         rows_t.append(tick)
         rows_leo.append(leo)
         rows_com.append(com)
+        rows_earliest.append(early)
         rows_cpu.append(_cpu_s())
         if tick - last_ckpt >= CHECKPOINT_EVERY_S:
             save()
