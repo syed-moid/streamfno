@@ -84,17 +84,21 @@ class FPResult:
 
 
 def _chang_cooper_delta(w: np.ndarray) -> np.ndarray:
-    """Chang-Cooper weight delta(w) = 1/w - 1/(e^w - 1), w = C h / D.
+    """Chang-Cooper weight delta(w) = 1 - (1/w - 1/(e^w - 1)), w = C h / D.
 
-    delta -> 1/2 as w -> 0 (centered) and -> 1 (0) as w -> +inf (-inf)
-    (full upwind); makes the discrete stationary flux vanish exactly on
-    exponential profiles exp(C x / D).
+    This is the weight on the UPSTREAM cell rho_{i-1} in the interface
+    flux F_i = C [delta rho_{i-1} + (1 - delta) rho_i] - D (rho_i -
+    rho_{i-1}) / h, matching the assembly below: delta -> 1/2 as w -> 0
+    (centered) and -> 1 (0) as w -> +inf (-inf) (full upwind); makes the
+    discrete stationary flux vanish exactly on exponential profiles
+    exp(C x / D).  (The textbook delta_CC = 1/w - 1/(e^w - 1) weights
+    the downstream cell; the two are related by delta = 1 - delta_CC.)
     """
     out = np.full_like(w, 0.5)
     small = np.abs(w) < 1e-8
     ws = w[~small]
-    out[~small] = 1.0 / ws - 1.0 / np.expm1(ws)
-    out[small] = 0.5 - w[small] / 12.0
+    out[~small] = 1.0 + 1.0 / np.expm1(ws) - 1.0 / ws
+    out[small] = 0.5 + w[small] / 12.0
     return out
 
 

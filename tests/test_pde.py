@@ -10,6 +10,15 @@ def _uniform_rho0(m_cells, n_classes=1):
     return np.ones((n_classes, m_cells))
 
 
+def _stationary_cell_averages(m_cells, b, a):
+    """Cell averages of the closed-form stationary density via its CDF
+    (point sampling misrepresents boundary layers thinner than a cell)."""
+    edges = np.arange(m_cells + 1) / m_cells
+    r = 2.0 * b / a
+    cdf = np.expm1(r * edges) / np.expm1(r)
+    return np.diff(cdf) * m_cells
+
+
 def test_stationary_matches_closed_form():
     """Constant b < 0, constant a, reflecting walls: the solver's long-time
     solution must match rho ~ exp(2 b x / a) to discretization accuracy."""
@@ -23,6 +32,41 @@ def test_stationary_matches_closed_form():
     assert err < 2e-3, err
     # Chang-Cooper should be near-exact on the exponential profile
     assert np.all(res.rho[-1, 0] > 0.0)
+
+
+def test_stationary_high_peclet_drain():
+    """Strong drain with tiny diffusion (cell Peclet |b| h / D ~ 9, the
+    real-telemetry regime a ~ 1e-3): the solver must stay positive,
+    conserve mass, and still match the closed-form exponential.
+    Regression test for the Chang-Cooper weight orientation -- with the
+    weight on the wrong cell the scheme is downwind here and diverges."""
+    b, a = -0.3, 1e-3
+    m_cells = 128
+    res = solve_fp(_uniform_rho0(m_cells), lambda x, m: b * np.ones_like(x), a,
+                   t_end=16.0, dt=2e-3)
+    h = 1.0 / m_cells
+    assert np.all(np.isfinite(res.rho))
+    assert np.all(res.rho >= -1e-12)
+    np.testing.assert_allclose(res.rho[:, 0, :].sum(axis=1) * h, 1.0,
+                               atol=1e-8)
+    exact = _stationary_cell_averages(m_cells, b, a)
+    # relative L1 on the wall boundary layer where the mass lives
+    err = np.abs(res.rho[-1, 0] - exact).sum() / exact.sum()
+    assert err < 5e-2, err
+
+
+def test_stationary_high_peclet_build():
+    """Mirror case toward the regulated wall: strong build, tiny
+    diffusion (the e07 forecast regime, b = +0.12, a ~ 7e-4)."""
+    b, a = 0.12, 7.4e-4
+    m_cells = 128
+    res = solve_fp(_uniform_rho0(m_cells), lambda x, m: b * np.ones_like(x), a,
+                   t_end=60.0, dt=2e-3)
+    assert np.all(np.isfinite(res.rho))
+    assert np.all(res.rho >= -1e-12)
+    exact = _stationary_cell_averages(m_cells, b, a)
+    err = np.abs(res.rho[-1, 0] - exact).sum() / exact.sum()
+    assert err < 5e-2, err
 
 
 def test_mass_conservation_and_positivity():
