@@ -124,6 +124,54 @@ def test_transport_limit_advects_profile():
     np.testing.assert_allclose(mean1 - mean0, b * 1.0, atol=0.01)
 
 
+def test_transport_limit_advects_profile_positive_drift():
+    """a = 0, b > 0: the mirror of the negative-drift transport test.
+    Both signs must be covered independently (the orientation bug was a
+    flux-direction error)."""
+    m_cells = 400
+    x = (np.arange(m_cells) + 0.5) / m_cells
+    rho0 = np.exp(-0.5 * ((x - 0.4) / 0.05) ** 2)
+    rho0 /= rho0.sum() / m_cells
+    b = 0.2
+    res = solve_fp(rho0, lambda xx, m: b * np.ones_like(xx), 0.0,
+                   t_end=1.0, dt=5e-4)
+    np.testing.assert_allclose(res.mean_lag[-1, 0] - res.mean_lag[0, 0],
+                               b * 1.0, atol=0.01)
+
+
+def test_mirror_symmetry_of_drift_sign():
+    """Solving with (b, a) from rho0 must equal the spatial mirror of
+    solving with (-b, a) from the mirrored rho0 -- an orientation check
+    that is exact for the discretization, not just to truncation."""
+    m_cells = 128
+    x = (np.arange(m_cells) + 0.5) / m_cells
+    rho0 = np.exp(-0.5 * ((x - 0.3) / 0.08) ** 2)
+    rho0 /= rho0.sum() / m_cells
+    b, a = 0.25, 2e-3
+    fwd = solve_fp(rho0, lambda xx, m: b * np.ones_like(xx), a,
+                   t_end=2.0, dt=2e-3)
+    mir = solve_fp(rho0[::-1].copy(), lambda xx, m: -b * np.ones_like(xx), a,
+                   t_end=2.0, dt=2e-3)
+    np.testing.assert_allclose(fwd.rho[-1, 0], mir.rho[-1, 0][::-1],
+                               atol=1e-10)
+
+
+def test_no_flux_lower_wall_accumulates_drain():
+    """Strong drain: every unit of mass must end up against the x = 0
+    wall (no leakage through the no-flux boundary) with the upper-wall
+    regulator silent."""
+    b, a = -0.3, 1e-3
+    m_cells = 128
+    res = solve_fp(_uniform_rho0(m_cells), lambda x, m: b * np.ones_like(x), a,
+                   t_end=16.0, dt=2e-3)
+    h = 1.0 / m_cells
+    np.testing.assert_allclose(res.rho[-1, 0].sum() * h, 1.0, atol=1e-8)
+    assert res.rho[-1, 0][:3].sum() * h > 0.99      # boundary-layer pile-up
+    # the uniform initial condition leaves ~1e-5 of local time at the
+    # upper wall before the drain empties it; nothing beyond that
+    assert res.regulator_cum[-1, 0] < 1e-4
+
+
 def test_mean_field_coupling_feeds_back():
     """Drift depending on the class mean must alter the trajectory."""
     m_cells = 100

@@ -9,7 +9,6 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT / "data" / "e10"
@@ -51,39 +50,45 @@ def frontier_panel(ax, r):
     ax.legend(fontsize=6.5)
 
 
-def crossover_panel(ax, r):
-    ks = sorted(int(k) for k in r["surrogate_accuracy"])
-    best_k = min(ks, key=lambda k:
-                 r["surrogate_accuracy"][str(k)]["w1_mean"][H_KEY])
-    row = r["crossover"][str(best_k)]
-    train_s = r["training"][str(best_k)]["train_cpu_s"]
-    n = np.logspace(0, 6, 200)
-    cls_ms = row["classical_ms_at_matched_accuracy"]
-    ax.loglog(n, n * cls_ms / 1e3, "k-",
-              label=f"classical at matched accuracy ({cls_ms:.0f} ms/eval)")
-    for tag, ls in (("single", "-"), ("batched", "--")):
-        cost = train_s + n * row[f"{tag}_ms"] / 1e3
-        ax.loglog(n, cost, ls, color="C0",
-                  label=f"surrogate K={best_k} {tag} "
-                        f"({row[f'{tag}_ms']:.2f} ms/eval + "
-                        f"{train_s:.0f} s training)")
-        n_star = row[f"{tag}_crossover_evals"]
-        if n_star is not None:
-            ax.axvline(n_star, color="C0", ls=":", lw=1.0, alpha=0.6)
-            ax.annotate(f"N*={n_star:.0f}", (n_star, train_s * 2),
-                        fontsize=7, color="C0", rotation=90,
-                        textcoords="offset points", xytext=(3, 0))
-    if all(row[f"{tag}_crossover_evals"] is None
-           for tag in ("single", "batched")):
-        ax.text(0.97, 0.35, "no crossover: the classical solver is\n"
-                            "faster at matched accuracy at every N",
-                transform=ax.transAxes, ha="right", va="center", fontsize=7)
-    ax.set_xlabel("forecast evaluations N")
-    ax.set_ylabel("total CPU cost (s)")
-    ax.set_title(f"(b) amortization at matched accuracy (K = {best_k})",
-                 fontsize=9)
-    ax.grid(alpha=0.3, which="both")
-    ax.legend(fontsize=6.5, loc="upper left")
+def envelope_panel(ax):
+    """Conceptual 2x2 applicability envelope: which forecasting engine a
+    problem class warrants, by intrinsic predictability (Gate 1, T3's
+    skill horizon) x computational burden of the governing PDE (Gate 2,
+    the measured amortization criterion).  Located empirically by panel
+    (a) and Phase C; no measured axes."""
+    quads = [
+        (0, 0, "0.93", "simple decision rule\n(nothing to forecast,\n"
+                       "nothing costly to solve)"),
+        (1, 0, "#dce9f6", "classical solver\n(forecast skill exists;\n"
+                          "the PDE is cheap)"),
+        (0, 1, "0.88", "no computation recovers\nmissing information\n"
+                       "(beyond the skill horizon)"),
+        (1, 1, "#dff0dc", "neural operator\npotentially useful\n"
+                          "(skill exists; solves are\nthe bottleneck)"),
+    ]
+    for qx, qy, color, label in quads:
+        ax.add_patch(plt.Rectangle((qx, qy), 1, 1, facecolor=color,
+                                   edgecolor="0.5", lw=0.8))
+        ax.text(qx + 0.5, qy + 0.5, label, ha="center", va="center",
+                fontsize=7)
+    ax.plot([1.72], [0.18], "o", color="C3", ms=7)
+    ax.annotate("this system\n(1-D FP, h < H*; e09/e10)", (1.72, 0.18),
+                textcoords="offset points", xytext=(-8, 14),
+                ha="center", fontsize=7, color="C3")
+    ax.annotate("", xy=(1.98, -0.13), xytext=(0.02, -0.13),
+                arrowprops=dict(arrowstyle="->", color="0.3"),
+                annotation_clip=False)
+    ax.annotate("", xy=(-0.09, 1.98), xytext=(-0.09, 0.02),
+                arrowprops=dict(arrowstyle="->", color="0.3"),
+                annotation_clip=False)
+    ax.set_xlabel("intrinsic predictability (h / H*)")
+    ax.set_ylabel("computational burden of the governing PDE")
+    ax.set_xlim(0, 2)
+    ax.set_ylim(0, 2)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_title("(b) applicability envelope (conceptual; located by (a) "
+                 "and Phase C)", fontsize=9)
 
 
 def main():
@@ -91,7 +96,7 @@ def main():
     r = json.loads((DATA_DIR / "results.json").read_text())
     fig, axes = plt.subplots(1, 2, figsize=(9.6, 4.0))
     frontier_panel(axes[0], r)
-    crossover_panel(axes[1], r)
+    envelope_panel(axes[1])
     fig.suptitle("e10: DCT spectral surrogate vs classical Chang-Cooper "
                  "solver", fontsize=10)
     fig.tight_layout()

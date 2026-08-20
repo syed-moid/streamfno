@@ -1,4 +1,4 @@
-.PHONY: setup test lint e00 e01 e02 e03 e04 e05 e06 e07 e08 e09 e10 figures
+.PHONY: setup test lint e00 e01 e02 e03 e04 e05 e06 e07 e08 e09 e10 e12 figures
 
 setup:
 	uv venv
@@ -59,6 +59,10 @@ e10:
 	uv run python experiments/e10_surrogate/run.py
 	uv run python experiments/e10_surrogate/analyze.py
 	uv run python experiments/e10_surrogate/figures.py
+
+# solver validation: refinement orders + independent MC reference
+e12:
+	uv run python experiments/e12_solver_validation/run.py
 
 figures:
 	uv run python experiments/e00_t1_convergence/figures.py

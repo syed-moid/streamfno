@@ -151,6 +151,23 @@ def classical_accuracy(lib) -> dict:
     return out
 
 
+N_WARMUP = 3
+
+
+def _timed(fn, reps: int) -> dict:
+    """Benchmark protocol: N_WARMUP untimed warm-up calls, then ``reps``
+    timed calls; p50 and p95 wall milliseconds."""
+    for _ in range(N_WARMUP):
+        fn()
+    lat = np.empty(reps)
+    for r in range(reps):
+        t0 = time.perf_counter_ns()
+        fn()
+        lat[r] = time.perf_counter_ns() - t0
+    return {"p50_ms": float(np.percentile(lat, 50) / 1e6),
+            "p95_ms": float(np.percentile(lat, 95) / 1e6)}
+
+
 def latency(models, lib) -> dict:
     torch.set_num_threads(1)
     sel = lib["split"] == "test"
@@ -160,51 +177,72 @@ def latency(models, lib) -> dict:
     m = rho.shape[2]
     x = (np.arange(m) + 0.5) / m
     n_steps = int(round(H_LAT / e10.DT_SAMPLE))
-    out = {"h": H_LAT, "torch_threads": 1}
+    out = {"h": H_LAT, "protocol": {
+        "warmup_reps": N_WARMUP, "timed_reps": N_LAT_REPS,
+        "torch_threads": 1,
+        "classical_precision": "float64 (numpy/LAPACK; the banded solve "
+                               "is single-threaded dgtsv)",
+        "surrogate_precision": "float32 as trained; float64 variant "
+                               "reported alongside",
+        "device": "CPU only; no host/device transfers on either engine",
+        "scope": "inference_only = rollout alone; end_to_end adds rho0 "
+                 "tensor prep and the boundary-flux threshold scan "
+                 "(classical solves accumulate the regulator internally; "
+                 "their threshold scan costs ~0.02 ms, see e09)"}}
 
-    # classical: single solve at each dt
+    # classical: single solve at each dt (float64 end to end)
+    bf0 = b_fields[0]
+
+    def b_fn(xv, mm, _bf=bf0):
+        return np.interp(np.asarray(xv, dtype=float), x, _bf)
+
     for dt in DT_COARSE:
-        lat = np.empty(N_LAT_REPS)
-        for r in range(N_LAT_REPS):
-            i = r % rho.shape[0]
-            bf = b_fields[i]
+        r = _timed(lambda dt=dt: solve_fp(
+            rho[0, 0].astype(float), b_fn, float(a_vals[0]),
+            t_end=H_LAT, dt=dt, dt_sample=e10.DT_SAMPLE), N_LAT_REPS)
+        out[f"classical_dt{dt:g}_ms"] = r["p50_ms"]
+        out[f"classical_dt{dt:g}_p95_ms"] = r["p95_ms"]
 
-            def b_fn(xv, mm, _bf=bf):
-                return np.interp(np.asarray(xv, dtype=float), x, _bf)
-
-            t0 = time.perf_counter_ns()
-            solve_fp(rho[i, 0].astype(float), b_fn, float(a_vals[i]),
-                     t_end=H_LAT, dt=dt, dt_sample=e10.DT_SAMPLE)
-            lat[r] = time.perf_counter_ns() - t0
-        out[f"classical_dt{dt:g}_ms"] = float(np.median(lat) / 1e6)
-
-    # surrogate: batch-1 rollout and batch-128 ensemble rollout
+    # surrogate: batch-1 and batch-128 rollouts, fp32 and fp64
     for k, model in models.items():
+        model64 = e10.DCTOperator(k).double()
+        model64.load_state_dict({kk: v.double()
+                                 for kk, v in model.state_dict().items()})
+        model64.eval()
         with torch.no_grad():
             u1 = torch.tensor(rho[0, 0] / m, dtype=torch.float32)[None]
             b1 = torch.tensor(b_fields[0])[None]
             a1 = torch.log(torch.tensor([a_vals[0]]))
-            lat = np.empty(N_LAT_REPS)
-            for r in range(N_LAT_REPS):
-                t0 = time.perf_counter_ns()
-                rollout(model, u1, b1, a1, n_steps)
-                lat[r] = time.perf_counter_ns() - t0
-            single_ms = float(np.median(lat) / 1e6)
+            single = _timed(lambda: rollout(model, u1, b1, a1, n_steps),
+                            N_LAT_REPS)
+            single64 = _timed(
+                lambda: rollout(model64, u1.double(), b1.double(),
+                                a1.double(), n_steps), N_LAT_REPS)
+
+            def end_to_end():
+                u = torch.tensor(rho[0, 0] / m, dtype=torch.float32)[None]
+                traj = rollout(model, u, b1, a1, n_steps)
+                flux = np.array([boundary_flux(t[0].numpy(), b_fields[0],
+                                               a_vals[0]) for t in traj])
+                return flux > 1e-4
+
+            e2e = _timed(end_to_end, N_LAT_REPS)
 
             ub = u1.expand(BATCH_ENSEMBLE, -1).contiguous()
             bb = b1.expand(BATCH_ENSEMBLE, -1).contiguous()
             ab = a1.expand(BATCH_ENSEMBLE).contiguous()
-            lat = np.empty(max(N_LAT_REPS // 3, 5))
-            for r in range(lat.size):
-                t0 = time.perf_counter_ns()
-                rollout(model, ub, bb, ab, n_steps)
-                lat[r] = time.perf_counter_ns() - t0
-            batch_ms = float(np.median(lat) / 1e6)
-        out[f"surrogate_K{k}_single_ms"] = single_ms
+            batch = _timed(lambda: rollout(model, ub, bb, ab, n_steps),
+                           max(N_LAT_REPS // 3, 5))
+        out[f"surrogate_K{k}_single_ms"] = single["p50_ms"]
+        out[f"surrogate_K{k}_single_p95_ms"] = single["p95_ms"]
+        out[f"surrogate_K{k}_single_fp64_ms"] = single64["p50_ms"]
+        out[f"surrogate_K{k}_end_to_end_ms"] = e2e["p50_ms"]
         out[f"surrogate_K{k}_batch{BATCH_ENSEMBLE}_per_member_ms"] = (
-            batch_ms / BATCH_ENSEMBLE)
-        print(f"  K={k}: single {single_ms:.2f} ms, batched "
-              f"{batch_ms / BATCH_ENSEMBLE:.3f} ms/member")
+            batch["p50_ms"] / BATCH_ENSEMBLE)
+        print(f"  K={k}: single {single['p50_ms']:.2f} ms (p95 "
+              f"{single['p95_ms']:.2f}, fp64 {single64['p50_ms']:.2f}, "
+              f"e2e {e2e['p50_ms']:.2f}), batched "
+              f"{batch['p50_ms'] / BATCH_ENSEMBLE:.3f} ms/member")
     return out
 
 
@@ -253,6 +291,19 @@ def main() -> None:
 
     print("surrogate accuracy on held-out trajectories...")
     acc_sur = surrogate_accuracy(models, lib)
+    # precision equivalence: the fp32 weights evaluated in fp64 must give
+    # the same test error (the fp32/fp64 latency gap is then hardware
+    # cost, not accuracy trade)
+    k_chk = max(models)
+    m64 = e10.DCTOperator(k_chk).double()
+    m64.load_state_dict({kk: v.double()
+                         for kk, v in models[k_chk].state_dict().items()})
+    m64.eval()
+    acc64 = surrogate_accuracy({k_chk: m64}, lib)
+    fp64_gap = abs(acc64[k_chk]["w1_mean"]["8.0"]
+                   - acc_sur[k_chk]["w1_mean"]["8.0"])
+    print(f"  fp64 accuracy gap at K={k_chk}: {fp64_gap:.2e}")
+
     print("classical coarse-dt accuracy...")
     acc_cls = classical_accuracy(lib)
     print("latency (single-threaded both sides)...")
