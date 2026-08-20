@@ -39,10 +39,12 @@ e05:
 e06:
 	uv run python experiments/e06_real_spectral/run.py
 	uv run python experiments/e06_real_spectral/analyze.py
+	uv run python experiments/e06_real_spectral/figures.py
 
 e07:
 	uv run python experiments/e07_identifiability/run.py
 	uv run python experiments/e07_identifiability/analyze.py
+	uv run python experiments/e07_identifiability/figures.py
 
 e08:
 	uv run python experiments/e08_actuation/run.py
@@ -54,3 +56,5 @@ figures:
 	uv run python experiments/e03_bound/figures.py
 	uv run python experiments/e04_predictors/figures.py
 	uv run python experiments/e05_headline/run.py
+	uv run python experiments/e06_real_spectral/figures.py
+	uv run python experiments/e07_identifiability/figures.py
