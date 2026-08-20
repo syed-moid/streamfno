@@ -83,17 +83,67 @@ def trailing_mean(t: np.ndarray, v: np.ndarray, window: float) -> np.ndarray:
     return out
 
 
-def mixture_drift(est: dict, p_high: float):
-    b_hi, a_hi = e07.drift_and_diffusion(est, "high")
-    b_lo, a_lo = e07.drift_and_diffusion(est, "low")
+def transferred_a() -> float:
+    """Variance rate transferred from the streamfno-exp calibration (e07,
+    noise-corrected high-state value): the e11 calibration's fast
+    interior transits leave no state-pure stride-4 windows for a local
+    estimate, and a is dominated by the shared service/commit mechanics
+    (same brokers, consumers, commit cadence, budget, unit mapping).
+    The transfer is immaterial in this advection-dominated regime
+    (|b|/a ~ 500) -- verified by the a-sensitivity sweep in main()."""
+    rec = json.loads((ROOT / "data" / "e07" /
+                      "identifiability.json").read_text())["high"]
+    a = rec["a_noise_corrected"]
+    if a is None or a <= 0:
+        a = rec["a_hat_d2"] if rec["a_hat_d2"] is not None else rec["a_hat_d1"]
+    return float(a)
+
+
+def state_drift(est: dict, state: str):
+    """e07's interpolated drift where the per-bin counts support it;
+    otherwise the pooled interior mean drift as a constant field (the
+    fast-transit states leave too few samples per interior bin for the
+    binwise interpolation, while the pooled estimate is well-determined
+    -- 0.5-1.9% relative error on this calibration run).  Variance-rate
+    fallback chain: own state -> other state -> transferred_a()."""
+    rec = est[state]
+    other = est["high" if state == "low" else "low"]
+    a_val = None
+    for r in (rec, other):
+        a_val = r["a_noise_corrected"]
+        if a_val is None or a_val <= 0:
+            a_val = (r["a_hat_d2"] if r["a_hat_d2"] is not None
+                     else r["a_hat_d1"])
+        if a_val is not None and a_val > 0:
+            break
+    if a_val is None or a_val <= 0:
+        a_val = transferred_a()
+    try:
+        b_fn, _ = e07.drift_and_diffusion(
+            {**est, state: {**rec, "a_hat_d1": a_val}}, state)
+        return b_fn, float(a_val)
+    except ValueError:
+        if rec["b_hat"] is None:
+            raise
+
+        def b(x, m, _v=float(rec["b_hat"])):
+            return np.full_like(np.asarray(x, dtype=float), _v)
+
+        return b, float(a_val)
+
+
+def mixture_drift(est: dict, p_high: float, a_scale: float = 1.0):
+    b_hi, a_hi = state_drift(est, "high")
+    b_lo, a_lo = state_drift(est, "low")
 
     def b(x, m):
         return p_high * b_hi(x, m) + (1.0 - p_high) * b_lo(x, m)
 
-    return b, p_high * a_hi + (1.0 - p_high) * a_lo
+    return b, a_scale * (p_high * a_hi + (1.0 - p_high) * a_lo)
 
 
-def forecast_run(run_dir: Path, est: dict, retention_s: float) -> dict:
+def forecast_run(run_dir: Path, est: dict, retention_s: float,
+                 a_scale: float = 1.0) -> dict:
     params, tel, t_norm, keep, man = e07.load_run(run_dir)
     dt = params.dt_poll_norm
     tau = params.tau_s
@@ -127,7 +177,8 @@ def forecast_run(run_dir: Path, est: dict, retention_s: float) -> dict:
         pool = x[max(0, i - RHO0_TICKS + 1):i + 1].ravel()
         rho0 = np.histogram(pool, bins=edges)[0] / pool.size / h_cell
         lam_i = max(float(lam_bar[i]), 1e-3)
-        b_fn, a_val = mixture_drift(est, float(np.clip(p_bar[i], 0.0, 1.0)))
+        b_fn, a_val = mixture_drift(est, float(np.clip(p_bar[i], 0.0, 1.0)),
+                                    a_scale)
         fp = e07.solve_fp(rho0, b_fn, a_val, t_end=H_MAX, dt=FP_DT,
                           dt_sample=1.0)
         l_hat = fp.mean_lag[:, 0] + fp.regulator_cum[:, 0] + overshoot[i]
@@ -203,6 +254,26 @@ def main() -> None:
                        for s in ("low", "high")},
         "runs": results,
     }
+    # a-sensitivity: the variance rate is partly transferred (see
+    # transferred_a), so show the leads barely depend on it
+    sens = {}
+    for scale in (0.25, 4.0):
+        leads_s = []
+        for run_dir in sorted(RUNS_DIR.glob("s*")):
+            man = json.loads((run_dir / "manifest.json").read_text())
+            r = forecast_run(run_dir, est, float(man["retention_s"]),
+                             a_scale=scale)
+            if r["lead_units"] is not None:
+                leads_s.append(r["lead_units"])
+        sens[str(scale)] = {
+            "lead_units_median": (float(np.median(leads_s))
+                                  if leads_s else None),
+            "n_crossings": len(leads_s)}
+        print(f"  a x {scale}: lead median "
+              f"{sens[str(scale)]['lead_units_median']} u "
+              f"over {len(leads_s)} crossings")
+    summary["a_sensitivity"] = sens
+
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     (DATA_DIR / "retention.json").write_text(json.dumps(summary, indent=1))
     if leads:

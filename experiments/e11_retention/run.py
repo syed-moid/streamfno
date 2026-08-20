@@ -53,7 +53,11 @@ TARGET_CROSSINGS = 5
 
 
 def run_params(seed: int, calibration: bool) -> RunParams:
-    r_lh, r_hl = (0.015, 0.030) if calibration else (0.030, 0.015)
+    # calibration mix must be subcritical for interior occupancy:
+    # p_high = 0.2 gives E[lam] = 0.47 < mu0 = 0.50 (the first calibration
+    # attempt used E[lam] = 0.55 > mu0 and saturated at the wall -- kept
+    # aside as runs/calibration-overloaded, see the experiment log)
+    r_lh, r_hl = (0.012, 0.048) if calibration else (0.030, 0.015)
     return RunParams(
         topic="streamfno-ret", group_id="streamfno-ret-cg",
         n_partitions=24, n_consumers=2,

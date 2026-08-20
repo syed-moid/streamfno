@@ -69,11 +69,12 @@ def envelope_panel(ax):
     for qx, qy, color, label in quads:
         ax.add_patch(plt.Rectangle((qx, qy), 1, 1, facecolor=color,
                                    edgecolor="0.5", lw=0.8))
-        ax.text(qx + 0.5, qy + 0.5, label, ha="center", va="center",
+        y_label = qy + (0.68 if (qx, qy) == (1, 0) else 0.5)
+        ax.text(qx + 0.5, y_label, label, ha="center", va="center",
                 fontsize=7)
-    ax.plot([1.72], [0.18], "o", color="C3", ms=7)
-    ax.annotate("this system\n(1-D FP, h < H*; e09/e10)", (1.72, 0.18),
-                textcoords="offset points", xytext=(-8, 14),
+    ax.plot([1.5], [0.22], "o", color="C3", ms=7)
+    ax.annotate("this system (1-D FP, h < H*; e09/e10)", (1.5, 0.22),
+                textcoords="offset points", xytext=(0, -14),
                 ha="center", fontsize=7, color="C3")
     ax.annotate("", xy=(1.98, -0.13), xytext=(0.02, -0.13),
                 arrowprops=dict(arrowstyle="->", color="0.3"),
