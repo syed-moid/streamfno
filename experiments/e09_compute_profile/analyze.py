@@ -32,11 +32,11 @@ def main() -> None:
                        ("per_broker_class",
                         f"{p['config']['n_broker_classes']}-class wall ms")):
         for q in ("p50", "p95", "p99"):
-            row = [fmt_ms(p[tag][f"{float(h):g}"]["wall_ms"][q])
+            row = [fmt_ms(p[tag][str(float(h))]["wall_ms"][q])
                    for h in p["config"]["horizons"]]
             emit(f"| {label} {q} | " + " | ".join(row) + " |")
     emit()
-    sc = p["single_class"][f"{float(p['config']['horizons'][-1]):g}"]
+    sc = p["single_class"][str(float(p["config"]["horizons"][-1]))]
     emit("Stage medians at the longest horizon (1 class): "
          f"rho0 {sc['stage_median_ms']['rho0']:.3f} ms, FP solve "
          f"{fmt_ms(sc['stage_median_ms']['fp_solve'])} ms, threshold "

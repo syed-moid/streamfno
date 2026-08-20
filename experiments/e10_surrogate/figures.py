@@ -73,6 +73,11 @@ def crossover_panel(ax, r):
             ax.annotate(f"N*={n_star:.0f}", (n_star, train_s * 2),
                         fontsize=7, color="C0", rotation=90,
                         textcoords="offset points", xytext=(3, 0))
+    if all(row[f"{tag}_crossover_evals"] is None
+           for tag in ("single", "batched")):
+        ax.text(0.97, 0.35, "no crossover: the classical solver is\n"
+                            "faster at matched accuracy at every N",
+                transform=ax.transAxes, ha="right", va="center", fontsize=7)
     ax.set_xlabel("forecast evaluations N")
     ax.set_ylabel("total CPU cost (s)")
     ax.set_title(f"(b) amortization at matched accuracy (K = {best_k})",
