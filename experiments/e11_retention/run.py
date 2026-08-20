@@ -97,9 +97,21 @@ def run_with_ager(run_dir: Path, params: RunParams,
             ["--params", str(params_path),
              "--out", str(run_dir / "producer.json")],
             run_dir / "producer.log")
-        rc = prod.wait(timeout=duration + 120)
-        if rc != 0:
-            raise RuntimeError(f"producer exited {rc}; see producer.log")
+        # heartbeat while the producer runs (long silent stretches get
+        # background tasks reaped in some harnesses)
+        t_hb = time.time()
+        while prod.poll() is None:
+            if time.time() - t_prod_spawn > duration + 120:
+                prod.kill()
+                raise RuntimeError("producer timed out; see producer.log")
+            if time.time() - t_hb >= 30.0:
+                t_hb = time.time()
+                print(f"    ... {(t_hb - t_prod_spawn) / 60:.1f} min of "
+                      f"{params.t_end * params.tau_s / 60:.0f}", flush=True)
+            time.sleep(2.0)
+        if prod.returncode != 0:
+            raise RuntimeError(
+                f"producer exited {prod.returncode}; see producer.log")
         time.sleep(drain_s)
     finally:
         harness.stop_all(procs)
