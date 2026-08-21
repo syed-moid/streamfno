@@ -82,7 +82,7 @@ def headline_figure(lead, bound, genie, gm_full, res, sanity):
         ax.set_ylim(0, 0.5)
         ax.grid(alpha=0.25)
     axes[0].set_ylabel("prediction error at lead h")
-    axes[0].legend(fontsize=6.5, loc="upper left")
+    axes[0].legend(fontsize=9, loc="upper left")
     fig.suptitle("Backpressure predictability: practical predictors vs the "
                  "telemetry-information ceiling", fontsize=11)
     fig.tight_layout()

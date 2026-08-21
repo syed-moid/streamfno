@@ -42,12 +42,12 @@ def episode_panel(ax, rec):
     if rec["t_first_alarm"] is not None:
         ax.axvline(rec["t_first_alarm"], color="C0", ls=":", lw=1.2)
         ax.annotate("first alarm", (rec["t_first_alarm"], ret * 0.15),
-                    rotation=90, fontsize=7, color="C0",
+                    rotation=90, fontsize=9, color="C0",
                     textcoords="offset points", xytext=(4, 0))
     if rec["t_actual_cross"] is not None:
         ax.axvline(rec["t_actual_cross"], color="k", ls=":", lw=1.2)
         ax.annotate("actual crossing", (rec["t_actual_cross"], ret * 0.15),
-                    rotation=90, fontsize=7,
+                    rotation=90, fontsize=9,
                     textcoords="offset points", xytext=(4, 0))
         if rec["t_first_alarm"] is not None:
             lead = rec["t_actual_cross"] - rec["t_first_alarm"]
@@ -57,14 +57,14 @@ def episode_panel(ax, rec):
                         arrowprops=dict(arrowstyle="<->", color="0.35"))
             ax.text(0.5 * (rec["t_first_alarm"] + rec["t_actual_cross"]),
                     ymid, f"warning lead {lead:.0f} u = {lead * tau:.0f} s",
-                    ha="center", va="bottom", fontsize=7, color="0.25")
+                    ha="center", va="bottom", fontsize=9, color="0.25")
         # actuation delay drawn to scale against the lead
         ha_u = np.mean(H_ACTUATION_S) / tau
         ax.axvspan(rec["t_actual_cross"] - ha_u, rec["t_actual_cross"],
                    color="C1", alpha=0.5)
         ax.annotate(f"H_actuation ({np.mean(H_ACTUATION_S):.1f} s)",
                     (rec["t_actual_cross"], ret * 0.55), rotation=90,
-                    fontsize=6.5, color="C1",
+                    fontsize=8.5, color="C1",
                     textcoords="offset points", xytext=(-7, 0))
     if rec["t_expiry"] is not None:
         ax.plot([rec["t_expiry"]], [ret], "v", color="C3", ms=8,
@@ -73,7 +73,7 @@ def episode_panel(ax, rec):
     ax.set_ylabel("oldest-unconsumed-record age (s)")
     ax.set_title(f"(a) retention-boundary episode ({rec['run']})",
                  fontsize=9)
-    ax.legend(fontsize=6.5, loc="upper left")
+    ax.legend(fontsize=8.5, loc="upper left")
     ax.grid(alpha=0.3)
 
 
@@ -94,7 +94,7 @@ def lead_panel(ax, summary):
     ax.set_xticks([])
     ax.set_ylabel("warning lead (s)")
     ax.set_title(f"(b) warning leads, {len(leads)} crossings", fontsize=9)
-    ax.legend(fontsize=6.5, loc="center right")
+    ax.legend(fontsize=8.5, loc="center right")
     ax.grid(alpha=0.3, axis="y")
 
 

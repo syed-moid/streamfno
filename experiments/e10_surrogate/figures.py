@@ -71,11 +71,11 @@ def envelope_panel(ax):
                                    edgecolor="0.5", lw=0.8))
         y_label = qy + (0.68 if (qx, qy) == (1, 0) else 0.5)
         ax.text(qx + 0.5, y_label, label, ha="center", va="center",
-                fontsize=7)
+                fontsize=9)
     ax.plot([1.5], [0.22], "o", color="C3", ms=7)
     ax.annotate("this system (1-D FP, h < H*; e09/e10)", (1.5, 0.22),
-                textcoords="offset points", xytext=(0, -14),
-                ha="center", fontsize=7, color="C3")
+                textcoords="offset points", xytext=(0, -16),
+                ha="center", fontsize=9, color="C3")
     ax.annotate("", xy=(1.98, -0.13), xytext=(0.02, -0.13),
                 arrowprops=dict(arrowstyle="->", color="0.3"),
                 annotation_clip=False)
