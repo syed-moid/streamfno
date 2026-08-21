@@ -57,7 +57,8 @@ GENIE_STRIDE = 2          # e03/genie.py DEC_STRIDE
 GENIE_M = 48              # e03/genie.py N_REPS
 N_BOOT = 4000
 BOOT_SEED = 2100
-DELTAS = (0.05, 0.10, 0.20)
+DELTAS = (0.025, 0.05, 0.10, 0.20)
+DELTAS_REL = (0.25, 0.5, 0.75)
 ERR_GATE = 0.2            # Table I's operating criterion
 
 
@@ -181,21 +182,31 @@ def main() -> None:
         errc_f_b = np.minimum(pi_f_b, 1.0 - pi_f_b)
         skill_b = errc_f_b - bw_b
 
-        # skill horizons on the lead grid, with right-censoring flags
-        h_star = {}
-        for d in DELTAS:
-            hits = skill_b >= d                     # (n_boot, n_leads)
+        # skill horizons on the lead grid, with right-censoring flags;
+        # normalized skill S_rel = S / min(pi, 1-pi) in [0,1] (Brier-
+        # skill-score analogue) separates rarity from information content
+        srel_b = skill_b / np.maximum(errc_f_b, 1e-12)
+        srel_point = ((errc_full - best_wrong.mean(axis=0))
+                      / np.maximum(errc_full, 1e-12))
+
+        def horizon(vals_b, point_vals, d):
+            hits = vals_b >= d
             hb = np.where(hits.any(axis=1),
                           lead[np.maximum.reduce(
                               np.where(hits, np.arange(lead.size), -1),
                               axis=1)], 0.0)
-            point_hits = (errc_full - best_wrong.mean(axis=0)) >= d
-            point = (float(lead[np.flatnonzero(point_hits)[-1]])
-                     if point_hits.any() else 0.0)
+            ph = point_vals >= d
+            point = (float(lead[np.flatnonzero(ph)[-1]]) if ph.any()
+                     else 0.0)
             lo, hi = np.percentile(hb, [2.5, 97.5])
-            h_star[f"{d:g}"] = {
-                "point": point, "ci": [float(lo), float(hi)],
-                "right_censored": bool(point >= lead[-1])}
+            return {"point": point, "ci": [float(lo), float(hi)],
+                    "right_censored": bool(point >= lead[-1])}
+
+        skill_point = errc_full - best_wrong.mean(axis=0)
+        h_star = {f"{d:g}": horizon(skill_b, skill_point, d)
+                  for d in DELTAS}
+        h_star_rel = {f"{d:g}": horizon(srel_b, srel_point, d)
+                      for d in DELTAS_REL}
 
         const_pass = errc_full < ERR_GATE
         const_row = (float(lead[np.flatnonzero(const_pass)[-1]])
@@ -203,7 +214,7 @@ def main() -> None:
 
         lv = {"n_states_stride2": int(p.shape[0]),
               "n_episodes": int(len(uniq)),
-              "per_lead": {}, "h_star": h_star,
+              "per_lead": {}, "h_star": h_star, "h_star_rel": h_star_rel,
               "const_predictor_largest_h_below_0.2": const_row,
               "best_predictor_by_lead": best_name}
         for j, h in enumerate(lead):
@@ -228,12 +239,18 @@ def main() -> None:
                 "skill": float(errc_full[j] - best_wrong[:, j].mean()),
                 "skill_ci": [float(v) for v in
                              np.percentile(skill_b[:, j], [2.5, 97.5])],
+                "skill_rel": float(srel_point[j]),
+                "skill_rel_ci": [float(v) for v in
+                                 np.percentile(srel_b[:, j], [2.5, 97.5])],
             }
             print(f"  h={h:>4g}: gamma {gamma[j]:.3f} "
                   f"[{glo:.3f},{ghi:.3f}]  err_const {err_const2[j]:.3f} "
                   f"[{elo:.3f},{ehi:.3f}]  diff [{dlo:+.3f},{dhi:+.3f}]  "
                   f"pi_genie {pi_genie[j]:.3f}  skill "
                   f"{lv['per_lead'][f'{h:g}']['skill']:.3f}")
+        print("  H*_rel: " + "  ".join(
+            f"d={d}: {h_star_rel[f'{d:g}']['point']:g} "
+            f"{h_star_rel[f'{d:g}']['ci']}" for d in DELTAS_REL))
         print("  H*: " + "  ".join(
             f"d={d}: {h_star[f'{d:g}']['point']:g} "
             f"{h_star[f'{d:g}']['ci']}"
