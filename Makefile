@@ -1,4 +1,4 @@
-.PHONY: setup test lint e00 e01 e02 e03 e04 e05 e06 e07 e08 e09 e10 e11 e12 figures
+.PHONY: setup test lint paper e00 e01 e02 e03 e04 e05 e06 e07 e08 e09 e10 e11 e12 figures
 
 setup:
 	uv venv
@@ -70,6 +70,16 @@ e11:
 # solver validation: refinement orders + independent MC reference
 e12:
 	uv run python experiments/e12_solver_validation/run.py
+
+# manuscript build (sources in manuscript/paper, untracked; figures read
+# from figures/ via relative paths; PDF never committed)
+paper:
+	uv run python manuscript/paper/planes_schematic.py
+	cd manuscript/paper && pdflatex -interaction=nonstopmode main >/dev/null || true
+	cd manuscript/paper && bibtex main >/dev/null || true
+	cd manuscript/paper && pdflatex -interaction=nonstopmode main >/dev/null || true
+	cd manuscript/paper && pdflatex -interaction=nonstopmode main | tail -2
+	@echo "PDF: manuscript/paper/main.pdf"
 
 figures:
 	uv run python experiments/e00_t1_convergence/figures.py
