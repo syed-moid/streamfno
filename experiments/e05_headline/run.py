@@ -50,10 +50,17 @@ def headline_figure(lead, bound, genie, gm_full, res, sanity):
     for ax, level in zip(axes, ("light", "moderate", "heavy")):
         gm = np.array([m["error"] for m in gm_full[level]])
         gm_lo = np.array([m["error_ci"][0] for m in gm_full[level]])
+        lr0 = res["levels"][level]
+        base0 = np.array([lr0[str(h)]["pf"]["base_rate"] for h in lead])
+        err_const = np.minimum(base0, 1 - base0)
         ok = sanity["comparable_floor_valid"]
         region_label = ("no predictor with this telemetry can enter"
                         if ok else "computed lower bound (sanity flag; see log)")
-        ax.fill_between(lead, 0.0, np.maximum(gm_lo, 0.0), color="0.82",
+        # display floor capped by the constant predictor (B1 audit): the
+        # genie is an expectation over fresh futures while the labels are
+        # one draw, so min(., err_const) keeps the region undercut-proof
+        floor = np.minimum(np.maximum(gm_lo, 0.0), err_const)
+        ax.fill_between(lead, 0.0, floor, color="0.82",
                         zorder=0, label=region_label)
         ax.plot(lead, gm, "k-", lw=1.4, zorder=1,
                 label="state-omniscient predictor (measured)")
