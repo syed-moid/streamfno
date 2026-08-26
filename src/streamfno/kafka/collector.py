@@ -34,6 +34,7 @@ import numpy as np
 from .params import RunParams
 
 CHECKPOINT_EVERY_S = 60.0
+MAX_CONSECUTIVE_FAILURES = 60
 
 
 def _cpu_s() -> float:
@@ -42,7 +43,7 @@ def _cpu_s() -> float:
 
 
 def run_collector(params: RunParams, out_path: str, duration_s: float) -> None:
-    from confluent_kafka import TopicPartition
+    from confluent_kafka import KafkaException, TopicPartition
     from confluent_kafka.admin import AdminClient, OffsetSpec
 
     admin = AdminClient({"bootstrap.servers": params.bootstrap,
@@ -94,6 +95,7 @@ def run_collector(params: RunParams, out_path: str, duration_s: float) -> None:
     t0 = time.time()
     next_tick = t0
     last_ckpt = t0
+    consecutive_failures = 0
     while not stop["flag"] and time.time() - t0 < duration_s:
         now = time.time()
         if now < next_tick:
@@ -101,9 +103,21 @@ def run_collector(params: RunParams, out_path: str, duration_s: float) -> None:
             continue
         next_tick += params.dt_poll_s
         tick = time.time()
-        leo = sample_offsets(OffsetSpec.latest())
-        com = sample_committed()
-        early = sample_offsets(OffsetSpec.earliest())
+        try:
+            leo = sample_offsets(OffsetSpec.latest())
+            com = sample_committed()
+            early = sample_offsets(OffsetSpec.earliest())
+        except KafkaException as exc:
+            # Transient during large-topic leader election (e.g. "No
+            # leaders found" right after a 384-partition create) or a
+            # mid-run election; skip the tick, keep the cadence.
+            consecutive_failures += 1
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                raise
+            print(f"sample failed ({exc}); tick skipped "
+                  f"({consecutive_failures} consecutive)", flush=True)
+            continue
+        consecutive_failures = 0
         rows_lat.append(time.time() - tick)
         rows_t.append(tick)
         rows_leo.append(leo)

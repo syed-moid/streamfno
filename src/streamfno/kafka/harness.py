@@ -146,6 +146,10 @@ def run_scenario(run_dir: str | Path, params: RunParams,
     finally:
         stop_all(procs)
 
+    if collector and not (run_dir / "lag.npz").exists():
+        raise RuntimeError("collector produced no lag.npz (it likely "
+                           "died at startup); see collector.log -- "
+                           "manifest withheld so the run is retried")
     summary = json.loads((run_dir / "producer.json").read_text())
     manifest = {
         "t0_wall": summary["t0_wall"],
