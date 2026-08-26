@@ -79,7 +79,11 @@ paper:
 	cd manuscript/paper && bibtex main >/dev/null || true
 	cd manuscript/paper && pdflatex -interaction=nonstopmode main >/dev/null || true
 	cd manuscript/paper && pdflatex -interaction=nonstopmode main | tail -2
-	@echo "PDF: manuscript/paper/main.pdf"
+	cd manuscript/paper && pdflatex -interaction=nonstopmode supplement >/dev/null || true
+	cd manuscript/paper && bibtex supplement >/dev/null || true
+	cd manuscript/paper && pdflatex -interaction=nonstopmode supplement >/dev/null || true
+	cd manuscript/paper && pdflatex -interaction=nonstopmode supplement | tail -2
+	@echo "PDF: manuscript/paper/main.pdf + supplement.pdf"
 
 figures:
 	uv run python experiments/e00_t1_convergence/figures.py
