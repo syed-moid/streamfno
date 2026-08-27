@@ -100,6 +100,24 @@ def main():
     fig.tight_layout()
     fig.savefig(FIG_DIR / "e06_spectra.png", dpi=200)
     plt.close(fig)
+
+    # print-compact 1x3 variant: cosine row only (the valid basis; the
+    # FFT-pinning statement stays in the text), for the space-limited
+    # main paper
+    fig, axes = plt.subplots(1, 3, figsize=(11.5, 3.6), sharey=True)
+    for j, level in enumerate(levels):
+        meta = fits[f"{level}_meta"]
+        panel(axes[j], "cos", level, f, fits, e01, e01_fits)
+        axes[j].set_title(
+            f"{level} (busy fraction {meta['busy_fraction']:.2f})", fontsize=9)
+        axes[j].set_xlabel("k")
+    axes[0].set_ylabel(r"cosine basis: $|\hat c_k| / |\hat c_0|$")
+    fig.suptitle(
+        "e06: real-cluster spectral decay -- boundary atom vs busy interior "
+        f"(fit range k in [{k_min}, {k_max}])", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(FIG_DIR / "e06_spectra_cos.png", dpi=200)
+    plt.close(fig)
     print(f"e06 figures written to {FIG_DIR}")
 
 

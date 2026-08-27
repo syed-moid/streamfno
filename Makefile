@@ -83,7 +83,11 @@ paper:
 	cd manuscript/paper && bibtex supplement >/dev/null || true
 	cd manuscript/paper && pdflatex -interaction=nonstopmode supplement >/dev/null || true
 	cd manuscript/paper && pdflatex -interaction=nonstopmode supplement | tail -2
+	uv run python infra/audit_numbers.py
 	@echo "PDF: manuscript/paper/main.pdf + supplement.pdf"
+
+audit:
+	uv run python infra/audit_numbers.py
 
 figures:
 	uv run python experiments/e00_t1_convergence/figures.py
