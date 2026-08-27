@@ -68,6 +68,7 @@ REQUIRED = [
     r"-0\.83",                # convergence slope vs B
     r"0\.87\$?--\$?1\.47",    # measured spectral decay exponents
     r"M = 48|M=48|M\$?{=}\$?48",   # genie continuations
+    r"10\.5281/zenodo\.22127322",  # artifact version DOI
 ]
 
 

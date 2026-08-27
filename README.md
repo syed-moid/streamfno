@@ -1,5 +1,7 @@
 # streamfno
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22127322.svg)](https://doi.org/10.5281/zenodo.22127322)
+
 Computational artifact for the paper **"Backpressure in Apache Kafka:
 Continuum Dynamics, Predictability Limits, and Operational Safety
 Horizons"** (Syed Moid, Ronin Institute for Independent Scholarship 2.0).
@@ -63,6 +65,23 @@ experiments (e06–e08, e11) need the local lab:
 | `make e12` | solver refinement orders | suppl. refinement study |
 
 See `PROVENANCE.md` for the full reproduction statement.
+
+## Citation
+
+The archived artifact is citable via its version DOI
+(10.5281/zenodo.22127322), which pins the exact archived state:
+
+```bibtex
+@software{moid2026streamfno,
+  author  = {Moid, Syed},
+  title   = {Backpressure in Apache Kafka: Continuum Dynamics,
+             Predictability Limits, and Operational Safety Horizons ---
+             research artifact},
+  year    = {2026},
+  doi     = {10.5281/zenodo.22127322},
+  url     = {https://github.com/syed-moid/streamfno}
+}
+```
 
 ## License
 
