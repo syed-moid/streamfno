@@ -41,6 +41,10 @@ FORBIDDEN = [
     (r"token-free", "dropped phrasing (polish item 5)"),
     (r"token cost", "dropped phrasing (polish item 5)"),
     (r"six scale-up cycles", "old cycle count; now 15 pooled"),
+    (r"\bP4\b", "internal obligation label; the PDF says Lemma 1/2"),
+    (r"\bP5\b", "internal obligation label; the PDF says Lemma 1/2"),
+    (r"(?i)draft manuscript", "submission build carries no draft mark"),
+    (r"Manuscript draft", "submission build carries no draft mark"),
 ]
 
 # Current headline values; each must appear in at least one source.
